@@ -270,3 +270,4 @@ firebase deploy --only firestore
 ## License
 
 MIT
+# Billsplitter v2
