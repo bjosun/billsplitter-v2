@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users can only read/write their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Household access control
+    match /households/{householdId} {
+      allow read: if request.auth != null &&
+        (request.auth.uid in resource.data.members || request.auth.uid == resource.data.createdBy);
+
+      allow create: if request.auth != null;
+
+      allow update: if request.auth != null &&
+        request.auth.uid == resource.data.createdBy;
+    }
+
+    // Expenses must belong to user's household
+    match /expenses/{expenseId} {
+      allow read: if request.auth != null &&
+        request.auth.uid in get(/databases/$(database)/documents/households/$(resource.data.householdId)).data.members;
+
+      allow create: if request.auth != null &&
+        request.auth.uid in get(/databases/$(database)/documents/households/$(request.resource.data.householdId)).data.members;
+
+      allow update: if request.auth != null &&
+        request.auth.uid == resource.data.createdBy;
+    }
+
+    // Invites are managed exclusively through Cloud Functions (admin SDK bypasses rules).
+    // Deny any direct client access.
+    match /invites/{inviteId} {
+      allow read, write: if false;
+    }
+
+    // Calculations
+    match /calculations/{calculationId} {
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        (
+          resource.data.householdId is string &&
+          exists(/databases/$(database)/documents/households/$(resource.data.householdId)) &&
+          request.auth.uid in get(/databases/$(database)/documents/households/$(resource.data.householdId)).data.members
+        )
+      );
+
+      allow create: if request.auth != null && (
+        request.auth.uid == request.resource.data.userId ||
+        (
+          request.resource.data.householdId is string &&
+          exists(/databases/$(database)/documents/households/$(request.resource.data.householdId)) &&
+          request.auth.uid in get(/databases/$(database)/documents/households/$(request.resource.data.householdId)).data.members
+        )
+      );
+
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+  }
+}

@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Firebase
+.firebase/
+firebase-debug.log*
+.firebase-debug.*.log
+firestore-debug.log*
+firestore-debug.*.log
+service-account.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Build
+client/dist/
+functions/lib/
+
+# Logs
+*.log

@@ -1,0 +1,29 @@
+{
+  "name": "billsplitter-v2",
+  "version": "1.0.0",
+  "description": "Modern household bill splitter with Firebase",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && cd functions && npm install && cd ../client && npm install",
+    "dev:client": "cd client && npm run dev",
+    "dev:functions": "cd functions && npm run dev",
+    "build:client": "cd client && npm run build",
+    "build:functions": "cd functions && npm run build",
+    "deploy": "firebase deploy",
+    "deploy:hosting": "firebase deploy --only hosting",
+    "deploy:functions": "firebase deploy --only functions",
+    "deploy:firestore": "firebase deploy --only firestore:rules,firestore:indexes",
+    "emulators": "firebase emulators:start"
+  },
+  "keywords": [
+    "billsplitter",
+    "firebase",
+    "react",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "firebase-tools": "^13.0.0"
+  }
+}
