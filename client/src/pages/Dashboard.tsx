@@ -16,6 +16,7 @@ import {
   listInvites,
   revokeInvite,
 } from '../services/api';
+import { calculateExpenditure } from '../utils/calculations';
 import type { Household, Invite } from '../types';
 
 interface Calculation {
@@ -497,6 +498,28 @@ export default function Dashboard() {
       .filter((item) => item.value > 0);
   }, [latestCalculation]);
 
+  const latestInsights = useMemo(() => {
+    if (!latestCalculation) return null;
+    const contributors = latestCalculation.contributors || [];
+    const bills = latestCalculation.bills || [];
+    const incomes: Record<string, number> = {};
+    contributors.forEach(c => {
+      if (c.name && (c.income ?? 0) > 0) incomes[c.name] = c.income ?? 0;
+    });
+    if (Object.keys(incomes).length === 0) return null;
+    const billObjects = bills.map(b => ({
+      name: b.name || '',
+      amount: b.amount || 0,
+      isShared: b.isShared !== false,
+      ...(b.payer ? { payer: b.payer } : {}),
+    }));
+    return {
+      result: calculateExpenditure(incomes, billObjects),
+      contributors,
+      createdAt: latestCalculation.createdAt,
+    };
+  }, [latestCalculation]);
+
   const sankeyRangeCalculations = useMemo(() => {
     const now = new Date();
 
@@ -812,6 +835,90 @@ export default function Dashboard() {
             <div className="text-sm text-gray-600">View past calculations</div>
           </button>
         </div>
+
+        {latestInsights && (
+          <div className="bg-white rounded-xl shadow-md p-6 mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">Senaste beräkning</h2>
+              {getCreatedAtMs(latestInsights.createdAt) > 0 && (
+                <span className="text-sm text-gray-500">
+                  {new Date(getCreatedAtMs(latestInsights.createdAt)).toLocaleDateString('sv-SE', {
+                    year: 'numeric', month: 'long', day: 'numeric',
+                  })}
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {latestInsights.contributors.map(contributor => {
+                const name = contributor.name;
+                const income = contributor.income || 0;
+                const sharedAmount = latestInsights.result.contributions[name] || 0;
+                const indivBills = latestInsights.result.individualBills[name] || [];
+                const indivTotal = indivBills.reduce((s, b) => s + b.amount, 0);
+                const totalToPay = sharedAmount + indivTotal;
+                const remainingAfterShared = latestInsights.result.targetRemainingBalance;
+                const remainingAfterAll = remainingAfterShared - indivTotal;
+                return (
+                  <div key={name} className="border rounded-xl p-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <p className="font-semibold text-gray-900">{name}</p>
+                      <span className="text-sm text-gray-400">kr {income.toLocaleString('sv-SE')}</span>
+                    </div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Gemensamma utgifter</span>
+                        <span className="font-medium text-indigo-700">kr {sharedAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Egna räkningar</span>
+                        <span className="font-medium text-gray-700">
+                          {indivBills.length > 0 ? `kr ${indivTotal.toFixed(2)}` : '—'}
+                        </span>
+                      </div>
+                      {indivBills.length > 0 && (
+                        <ul className="ml-3 space-y-0.5">
+                          {indivBills.map((b, i) => (
+                            <li key={i} className="flex justify-between text-xs text-gray-400">
+                              <span>{b.name}</span>
+                              <span>kr {b.amount.toFixed(2)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="flex justify-between border-t pt-2 mt-1 font-semibold">
+                        <span className="text-gray-700">Totalt att betala</span>
+                        <span className="text-gray-900">kr {totalToPay.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-gray-400">
+                        <span>Kvar efter gemensam delning</span>
+                        <span>kr {remainingAfterShared.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm font-medium">
+                        <span className="text-gray-600">Kvar totalt (inkl. egna)</span>
+                        <span className="text-green-700">kr {remainingAfterAll.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {latestInsights.result.transfers.length > 0 && (
+              <div className="mt-4 pt-4 border-t">
+                <p className="font-semibold text-gray-700 mb-2 text-sm">Överföringar som behövs:</p>
+                <div className="space-y-2">
+                  {latestInsights.result.transfers.map((t, i) => (
+                    <div key={i} className="flex justify-between bg-indigo-50 rounded-lg px-3 py-2 text-sm">
+                      <span className="text-gray-800">{t.from} betalar {t.to}</span>
+                      <span className="font-semibold text-indigo-700">kr {t.amount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {summaryStats.map((stat) => (
