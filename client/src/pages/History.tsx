@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { auth } from '../firebase';
+import { calculateExpenditure } from '../utils/calculations';
 
 interface Contributor {
   name: string;
@@ -60,27 +61,43 @@ const formatCurrency = (value: number): string => `kr ${value.toFixed(2)}`;
 const getCalculationInsights = (calc: Calculation) => {
   const bills = calc.bills || [];
   const contributors = calc.contributors || [];
-  const contributions = calc.result?.contributions || {};
-  const remainingAmounts = calc.result?.remainingAmounts || {};
-  const transfers = calc.result?.transfers || [];
+
+  // Build inputs for a fresh recalculation using the current algorithm
+  const incomes: Record<string, number> = {};
+  contributors.forEach(c => {
+    if (c.name && (c.income ?? 0) > 0) {
+      incomes[c.name] = c.income ?? 0;
+    }
+  });
+
+  const billObjects = bills.map(b => ({
+    name: b.name || '',
+    amount: b.amount || 0,
+    isShared: b.isShared !== false,
+    ...(b.payer ? { payer: b.payer } : {}),
+  }));
+
+  const freshResult = Object.keys(incomes).length > 0
+    ? calculateExpenditure(incomes, billObjects)
+    : null;
+
+  const contributions = freshResult?.contributions ?? calc.result?.contributions ?? {};
+  const remainingAmounts = freshResult?.remainingAmounts ?? calc.result?.remainingAmounts ?? {};
+  const transfers = freshResult?.transfers ?? calc.result?.transfers ?? [];
+  const freshIndividualBills = freshResult?.individualBills ?? {};
 
   const totalBills = bills.reduce((sum, bill) => sum + (bill.amount || 0), 0);
-  const sharedBills = bills
+  const sharedBillsTotal = bills
     .filter((bill) => bill.isShared !== false)
     .reduce((sum, bill) => sum + (bill.amount || 0), 0);
-  const individualBills = totalBills - sharedBills;
+  const individualBillsTotal = totalBills - sharedBillsTotal;
   const transferTotal = transfers.reduce((sum, transfer) => sum + (transfer.amount || 0), 0);
 
   const perPerson = contributors.map((contributor) => {
     const name = contributor.name;
     const income = contributor.income || 0;
-    const paidByBills = bills.reduce((sum, bill) => {
-      if (bill.payer === name) {
-        return sum + (bill.amount || 0);
-      }
-
-      return sum;
-    }, 0);
+    const indivBillsForPerson = freshIndividualBills[name] || [];
+    const paidByBills = indivBillsForPerson.reduce((s, b) => s + b.amount, 0);
     const shouldPay = contributions[name] || 0;
     const remaining = remainingAmounts[name] ?? Math.max(0, income - (shouldPay + paidByBills));
 
@@ -95,11 +112,12 @@ const getCalculationInsights = (calc: Calculation) => {
 
   return {
     totalBills,
-    sharedBills,
-    individualBills,
+    sharedBills: sharedBillsTotal,
+    individualBills: individualBillsTotal,
     transferTotal,
     transferCount: transfers.length,
     perPerson,
+    transfers,
   };
 };
 
@@ -343,10 +361,10 @@ export default function History() {
                             <thead>
                               <tr className="text-left text-gray-500 border-b">
                                 <th className="py-2 pr-4 font-medium">Person</th>
-                                <th className="py-2 pr-4 font-medium">Income</th>
-                                <th className="py-2 pr-4 font-medium">Paid upfront (bills)</th>
-                                <th className="py-2 pr-4 font-medium">Shared contribution</th>
-                                <th className="py-2 font-medium">Left after split</th>
+                                <th className="py-2 pr-4 font-medium">Inkomst</th>
+                                <th className="py-2 pr-4 font-medium">Egna räkningar</th>
+                                <th className="py-2 pr-4 font-medium">Andel gemensamt</th>
+                                <th className="py-2 font-medium">Kvar efter delning</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -362,6 +380,20 @@ export default function History() {
                             </tbody>
                           </table>
                         </div>
+
+                        {insights.transfers.length > 0 && (
+                          <div className="mt-4 pt-3 border-t">
+                            <p className="text-sm font-semibold text-gray-700 mb-2">Överföringar som behövs:</p>
+                            <div className="space-y-1">
+                              {insights.transfers.map((t, i) => (
+                                <div key={i} className="flex justify-between text-sm bg-indigo-50 rounded-lg px-3 py-2">
+                                  <span className="text-gray-800">{t.from} betalar {t.to}</span>
+                                  <span className="font-semibold text-indigo-700">{formatCurrency(t.amount)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </>
                     );
                   })()}

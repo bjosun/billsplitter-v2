@@ -50,27 +50,31 @@ export function calculateExpenditure(
     }
   });
 
-  // Total income and total bills (shared + individual)
-  const totalIncome = Object.values(incomes).reduce((a, b) => a + b, 0);
-  const totalIndividualBills = Object.values(individualBillsTotalByPerson).reduce((a, b) => a + b, 0);
-  const totalBills = totalSharedBills + totalIndividualBills;
+  // Track shared bills pre-paid by a specific person (for transfer settlement)
+  const sharedPaidByPerson: Record<string, number> = {};
+  sharedBills.forEach(bill => {
+    if (bill.payer) {
+      sharedPaidByPerson[bill.payer] = (sharedPaidByPerson[bill.payer] || 0) + bill.amount;
+    }
+  });
 
-  // Calculate target remaining balance after ALL bills
-  const targetRemainingBalance = (totalIncome - totalBills) / Object.keys(incomes).length;
+  const totalIncome = Object.values(incomes).reduce((a, b) => a + b, 0);
+
+  // Individual bills are personal expenses — only shared bills factor into the split
+  const targetRemainingBalance = (totalIncome - totalSharedBills) / Object.keys(incomes).length;
 
   const contributions: Record<string, number> = {};
   const remainingAmounts: Record<string, number> = {};
 
   for (const [name, income] of Object.entries(incomes)) {
-    const individualBillAmount = individualBillsTotalByPerson[name] || 0;
-    // Contribution = income - target_remaining (this is what they pay towards shared bills)
-    // Their total outflow = individual bills + contribution to shared
-    const contributionToShared = income - targetRemainingBalance - individualBillAmount;
+    // Contribution = income - target_remaining
+    // Individual bills are NOT deducted — they are each person's own responsibility
+    const contributionToShared = income - targetRemainingBalance;
     contributions[name] = contributionToShared;
     remainingAmounts[name] = targetRemainingBalance;
   }
 
-  const transfers = calculateTransfers(contributions, targetRemainingBalance);
+  const transfers = calculateTransfers(contributions, sharedPaidByPerson);
 
   return {
     contributions,
@@ -82,39 +86,38 @@ export function calculateExpenditure(
 }
 export function calculateTransfers(
   contributions: Record<string, number>,
-  targetRemainingBalance: number
+  sharedBillsPaidByPerson: Record<string, number> = {}
 ): Transfer[] {
   const transfers: Transfer[] = [];
-  
-  const payers: Array<{ name: string; amount: number }> = [];
+
+  // net = already paid towards shared - what they owe
+  // positive net → overpaid → should receive money from others
+  // negative net → underpaid → needs to send money to others
   const receivers: Array<{ name: string; amount: number }> = [];
-  
+  const senders: Array<{ name: string; amount: number }> = [];
+
   for (const [name, contribution] of Object.entries(contributions)) {
-    if (contribution > targetRemainingBalance) {
-      payers.push({ name, amount: contribution - targetRemainingBalance });
-    } else if (contribution < targetRemainingBalance) {
-      receivers.push({ name, amount: targetRemainingBalance - contribution });
+    const alreadyPaid = sharedBillsPaidByPerson[name] || 0;
+    const net = alreadyPaid - contribution;
+
+    if (net > 0.005) {
+      receivers.push({ name, amount: net });
+    } else if (net < -0.005) {
+      senders.push({ name, amount: -net });
     }
   }
-  
-  for (const payer of payers) {
-    let remainingToPay = payer.amount;
-    
+
+  for (const sender of senders) {
+    let remaining = sender.amount;
     for (const receiver of receivers) {
-      if (remainingToPay <= 0) break;
-      if (receiver.amount <= 0) continue;
-      
-      const transferAmount = Math.min(remainingToPay, receiver.amount);
-      transfers.push({
-        from: payer.name,
-        to: receiver.name,
-        amount: transferAmount,
-      });
-      
-      remainingToPay -= transferAmount;
-      receiver.amount -= transferAmount;
+      if (remaining <= 0.005) break;
+      if (receiver.amount <= 0.005) continue;
+      const amount = Math.min(remaining, receiver.amount);
+      transfers.push({ from: sender.name, to: receiver.name, amount });
+      remaining -= amount;
+      receiver.amount -= amount;
     }
   }
-  
+
   return transfers;
 }

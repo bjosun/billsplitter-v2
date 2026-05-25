@@ -19,6 +19,7 @@ export default function Calculator() {
   const [historicalSuggestions, setHistoricalSuggestions] = useState<Record<string, { isShared: boolean; payer?: string }>>({});
   const [households, setHouseholds] = useState<Household[]>([]);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string>('');
+  const [saveConfirmation, setSaveConfirmation] = useState(false);
 
   // Load historical suggestions on mount
   useEffect(() => {
@@ -208,7 +209,7 @@ export default function Calculator() {
       }
 
       await addDoc(collection(db, 'calculations'), calculation);
-      alert('Calculation saved successfully!');
+      setSaveConfirmation(true);
     } catch (error) {
       console.error('Error saving calculation:', error);
       alert('Failed to save calculation: ' + (error as any).message);
@@ -404,57 +405,148 @@ export default function Calculator() {
         )}
       </div>
 
-        {result && (
-          <div className="mt-6 bg-white rounded-xl shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">Results</h2>
+      {saveConfirmation && result && (
+        <div className="mt-4 bg-green-50 border border-green-200 rounded-xl p-5">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="font-semibold text-green-800 text-lg">Sparad! Betalningsöversikt</h3>
+            <button
+              onClick={() => setSaveConfirmation(false)}
+              className="text-green-600 hover:text-green-900 text-xl font-bold leading-none"
+            >
+              ×
+            </button>
+          </div>
 
-            <div className="mb-6">
-              <h3 className="font-semibold mb-2">Contributions (to shared bills)</h3>
-              {Object.entries(result.contributions).map(([name, amount]) => (
-                <div key={name} className="flex justify-between py-2 border-b">
-                  <span>{name}</span>
-                  <span className="font-semibold">kr {(amount as number).toFixed(2)}</span>
+          <div className="space-y-3">
+            {Object.entries(result.contributions).map(([name, amount]) => {
+              const sharedAmount = amount as number;
+              const indivBills: any[] = result.individualBills?.[name] || [];
+              const indivTotal = indivBills.reduce((s: number, b: any) => s + b.amount, 0);
+              const totalToPay = sharedAmount + indivTotal;
+              const remaining = (result.targetRemainingBalance ?? 0) - indivTotal;
+              return (
+                <div key={name} className="bg-white rounded-lg p-3 border border-green-100">
+                  <p className="font-semibold text-gray-800 mb-2">{name}</p>
+                  <div className="text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Gemensamma utgifter</span>
+                      <span className="text-indigo-700 font-medium">kr {sharedAmount.toFixed(2)}</span>
+                    </div>
+                    {indivBills.length > 0 && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Egna räkningar</span>
+                          <span className="text-gray-700 font-medium">kr {indivTotal.toFixed(2)}</span>
+                        </div>
+                        <ul className="ml-3 space-y-0.5">
+                          {indivBills.map((b: any, i: number) => (
+                            <li key={i} className="flex justify-between text-xs text-gray-400">
+                              <span>{b.name}</span>
+                              <span>kr {b.amount.toFixed(2)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    <div className="flex justify-between border-t pt-1 mt-1 font-semibold">
+                      <span className="text-gray-700">Totalt att betala</span>
+                      <span className="text-gray-900">kr {totalToPay.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-400 pt-0.5">
+                      <span>Kvar efter gemensam delning</span>
+                      <span>kr {(result.targetRemainingBalance ?? 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500 font-medium">
+                      <span>Kvar totalt (inkl. egna räkningar)</span>
+                      <span className="text-green-700">kr {remaining.toFixed(2)}</span>
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
+          </div>
 
-            <div className="mb-6">
-              <h3 className="font-semibold mb-2">Remaining After Bills</h3>
-              {Object.entries(result.remainingAmounts).map(([name, amount]) => (
-                <div key={name} className="flex justify-between py-2 border-b">
-                  <span>{name}</span>
-                  <span className="font-semibold">kr {(amount as number).toFixed(2)}</span>
-                </div>
-              ))}
-            </div>
-
-            {result.individualBills && Object.keys(result.individualBills).length > 0 && (
-              <div className="mb-6">
-                <h3 className="font-semibold mb-2">Individuella räkningar</h3>
-                {Object.entries(result.individualBills).map(([person, bills]) => (
-                  <div key={person} className="mb-2">
-                    <span className="font-medium">{person}:</span>
-                    <ul className="ml-4 text-sm text-gray-600">
-                      {(bills as any[]).map((bill: any, i: number) => (
-                        <li key={i}>
-                          {bill.name} - kr {bill.amount.toFixed(2)}
-                        </li>
-                      ))}
-                    </ul>
+          {result.transfers && result.transfers.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-green-200">
+              <p className="font-semibold text-green-800 mb-2">Överföringar som behövs:</p>
+              <div className="space-y-2">
+                {result.transfers.map((t: any, i: number) => (
+                  <div key={i} className="flex justify-between bg-white rounded-lg px-3 py-2 border border-green-100 text-sm">
+                    <span className="text-gray-800">{t.from} betalar {t.to}</span>
+                    <span className="font-semibold text-indigo-700">kr {t.amount.toFixed(2)}</span>
                   </div>
                 ))}
               </div>
-            )}
+            </div>
+          )}
+        </div>
+      )}
+
+        {result && (
+          <div className="mt-6 bg-white rounded-xl shadow-md p-6">
+            <h2 className="text-xl font-semibold mb-4">Resultat</h2>
+
+            <div className="space-y-4">
+              {Object.entries(result.contributions).map(([name, amount]) => {
+                const sharedAmount = amount as number;
+                const indivBills: any[] = result.individualBills?.[name] || [];
+                const indivTotal = indivBills.reduce((s: number, b: any) => s + b.amount, 0);
+                const totalToPay = sharedAmount + indivTotal;
+                const remainingAfterShared = result.targetRemainingBalance ?? 0;
+                const remainingAfterAll = remainingAfterShared - indivTotal;
+                return (
+                  <div key={name} className="border rounded-xl p-4">
+                    <p className="font-semibold text-gray-900 mb-3 text-base">{name}</p>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Gemensamma utgifter (din andel)</span>
+                        <span className="font-medium text-indigo-700">kr {sharedAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Egna räkningar</span>
+                        <span className="font-medium text-gray-700">
+                          {indivBills.length > 0 ? `kr ${indivTotal.toFixed(2)}` : '—'}
+                        </span>
+                      </div>
+                      {indivBills.length > 0 && (
+                        <ul className="ml-3 mt-0.5 space-y-0.5">
+                          {indivBills.map((b: any, i: number) => (
+                            <li key={i} className="flex justify-between text-xs text-gray-400">
+                              <span>{b.name}</span>
+                              <span>kr {b.amount.toFixed(2)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="flex justify-between border-t pt-2 mt-1 font-semibold text-base">
+                        <span className="text-gray-800">Totalt att betala</span>
+                        <span className="text-gray-900">kr {totalToPay.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between pt-1 text-xs text-gray-400">
+                        <span>Kvar efter gemensam delning</span>
+                        <span>kr {remainingAfterShared.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm font-medium">
+                        <span className="text-gray-600">Kvar totalt (inkl. egna räkningar)</span>
+                        <span className="text-green-700">kr {remainingAfterAll.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
 
             {result.transfers.length > 0 && (
-              <div>
-                <h3 className="font-semibold mb-2">Transfers Needed</h3>
-                {result.transfers.map((transfer: any, index: number) => (
-                  <div key={index} className="flex justify-between py-2 border-b">
-                    <span>{transfer.from} → {transfer.to}</span>
-                    <span className="font-semibold text-indigo-600">kr {transfer.amount.toFixed(2)}</span>
-                  </div>
-                ))}
+              <div className="mt-5 pt-4 border-t">
+                <h3 className="font-semibold mb-2 text-gray-800">Överföringar som behövs</h3>
+                <div className="space-y-2">
+                  {result.transfers.map((transfer: any, index: number) => (
+                    <div key={index} className="flex justify-between bg-indigo-50 rounded-lg px-3 py-2 text-sm">
+                      <span className="text-gray-800">{transfer.from} betalar {transfer.to}</span>
+                      <span className="font-semibold text-indigo-700">kr {transfer.amount.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
