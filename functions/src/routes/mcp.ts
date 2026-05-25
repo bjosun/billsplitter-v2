@@ -9,20 +9,29 @@ const router = Router();
 // MCP Protocol: JSON-RPC 2.0
 interface MCPRequest {
   jsonrpc: '2.0';
-  id: string | number;
+  id?: string | number | null;
   method: string;
   params?: any;
 }
 
 interface MCPResponse {
   jsonrpc: '2.0';
-  id: string | number;
+  id: string | number | null;
   result?: any;
   error?: {
     code: number;
     message: string;
+    data?: any;
   };
 }
+
+const PROTOCOL_VERSION = '2024-11-05';
+const SERVER_INFO = { name: 'billsplitter-mcp', version: '1.0.0' };
+
+// JSON-RPC error codes
+const METHOD_NOT_FOUND = -32601;
+const INVALID_PARAMS = -32602;
+const INTERNAL_ERROR = -32603;
 
 // MCP Tools
 const tools = [
@@ -151,6 +160,100 @@ const tools = [
     },
   },
   {
+    name: 'list_households',
+    description: 'List all households the user is a member of',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'list_contributors',
+    description: 'List contributors in a household',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        householdId: { type: 'string', description: 'Household ID' },
+      },
+      required: ['householdId'],
+    },
+  },
+  {
+    name: 'list_bills',
+    description: 'List bills in a household',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        householdId: { type: 'string', description: 'Household ID' },
+      },
+      required: ['householdId'],
+    },
+  },
+  {
+    name: 'update_contributor',
+    description: 'Update an existing contributor (name and/or income)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        contributorId: { type: 'string', description: 'Contributor ID' },
+        name: { type: 'string', description: 'New name (optional)' },
+        income: { type: 'number', description: 'New monthly income (optional)' },
+      },
+      required: ['contributorId'],
+    },
+  },
+  {
+    name: 'remove_contributor',
+    description: 'Remove a contributor from their household',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        contributorId: { type: 'string', description: 'Contributor ID' },
+      },
+      required: ['contributorId'],
+    },
+  },
+  {
+    name: 'get_calculation',
+    description: 'Get a saved split calculation by id',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        calculationId: { type: 'string', description: 'Calculation ID' },
+      },
+      required: ['calculationId'],
+    },
+  },
+  {
+    name: 'mark_transfer_paid',
+    description: 'Mark a transfer in a calculation as paid or pending',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        calculationId: { type: 'string', description: 'Calculation ID' },
+        transferIndex: { type: 'number', description: 'Zero-based index of transfer in the calculation' },
+        status: {
+          type: 'string',
+          enum: ['paid', 'pending'],
+          description: 'New status (default: paid)',
+        },
+      },
+      required: ['calculationId', 'transferIndex'],
+    },
+  },
+  {
+    name: 'summarize_month',
+    description: 'Summarize all split calculations for a household in a given month (totals, per-contributor, transfer status)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        householdId: { type: 'string', description: 'Household ID' },
+        month: { type: 'string', description: 'Month in YYYY-MM format, e.g. 2026-05' },
+      },
+      required: ['householdId', 'month'],
+    },
+  },
+  {
     name: 'parse_bank_text',
     description: 'Parse bank transaction text from multiple banks (SEB, Swedbank, Nordea, etc.) to extract bills',
     inputSchema: {
@@ -193,6 +296,21 @@ const resources = [
     mimeType: 'application/json',
   },
 ];
+
+// Verify the authenticated user is a member of the given household.
+// Pre-existing tools (add_bill, calculate_split, etc.) do not check this; new tools must.
+async function assertHouseholdMember(uid: string, householdId: string) {
+  const doc = await db.collection('households').doc(householdId).get();
+  if (!doc.exists) {
+    throw new Error('Household not found');
+  }
+  const data = doc.data() as any;
+  const members: string[] = data?.members || [];
+  if (!members.includes(uid)) {
+    throw new Error('Not a member of this household');
+  }
+  return { id: doc.id, ...data };
+}
 
 // Tool handlers
 // Smart Multi-Bank Text Parser
@@ -349,17 +467,12 @@ const toolHandlers: Record<string, any> = {
 
   get_household: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
-    const docSnap = await db.collection('households').doc(householdId).get();
-    
-    if (!docSnap.exists) {
-      throw new Error('Household not found');
-    }
-    
-    return { id: docSnap.id, ...docSnap.data() };
+    return assertHouseholdMember(req.user!.uid, householdId);
   },
 
   add_contributor: async (req: AuthRequest, params: any) => {
     const { householdId, name, income } = params;
+    await assertHouseholdMember(req.user!.uid, householdId);
     const contributor = {
       householdId,
       name,
@@ -372,6 +485,7 @@ const toolHandlers: Record<string, any> = {
 
   add_bill: async (req: AuthRequest, params: any) => {
     const { householdId, name, amount, shared, payer } = params;
+    await assertHouseholdMember(req.user!.uid, householdId);
     const bill = {
       householdId,
       name,
@@ -385,52 +499,273 @@ const toolHandlers: Record<string, any> = {
   },
 
   update_bill: async (req: AuthRequest, params: any) => {
-    const { householdId, billId, name, amount, shared, payer } = params;
+    const { billId, name, amount, shared, payer } = params;
+    const billRef = db.collection('bills').doc(billId);
+    const billSnap = await billRef.get();
+    if (!billSnap.exists) {
+      throw new Error('Bill not found');
+    }
+    // Verify against the bill's actual householdId, not user-supplied — avoids spoofing.
+    const billData = billSnap.data() as any;
+    await assertHouseholdMember(req.user!.uid, billData.householdId);
+
     const updates: any = {};
     if (name !== undefined) updates.name = name;
     if (amount !== undefined) updates.amount = amount;
     if (shared !== undefined) updates.shared = shared;
     if (payer !== undefined) updates.payer = payer;
-    
-    await db.collection('bills').doc(billId).update(updates);
+
+    await billRef.update(updates);
     return { id: billId, ...updates };
   },
 
   remove_bill: async (req: AuthRequest, params: any) => {
-    const { householdId, billId } = params;
-    await db.collection('bills').doc(billId).delete();
+    const { billId } = params;
+    const billRef = db.collection('bills').doc(billId);
+    const billSnap = await billRef.get();
+    if (!billSnap.exists) {
+      throw new Error('Bill not found');
+    }
+    const billData = billSnap.data() as any;
+    await assertHouseholdMember(req.user!.uid, billData.householdId);
+
+    await billRef.delete();
     return { success: true };
   },
 
   calculate_split: async (req: AuthRequest, params: any) => {
     const { householdId, contributors, bills } = params;
-    
+    await assertHouseholdMember(req.user!.uid, householdId);
+
     // Filter shared bills
     const sharedBills = bills.filter((b: any) => b.shared);
-    
+
     // Convert contributors array to income record
     const incomes: Record<string, number> = {};
     contributors.forEach((c: any) => {
       incomes[c.name] = c.income;
     });
-    
+
     // Calculate
     const expenditure = calculateExpenditure(incomes, sharedBills);
-    
+
+    // Attach pending status to every transfer so mark_transfer_paid can flip it later.
+    const expenditureWithStatus = {
+      ...expenditure,
+      transfers: expenditure.transfers.map((t) => ({ ...t, status: 'pending' as const })),
+    };
+
     // Save to history
     const calculation = {
       userId: req.user!.uid,
       householdId,
       contributors,
       bills: sharedBills,
-      result: expenditure,
+      result: expenditureWithStatus,
       createdAt: new Date().toISOString(),
     };
     const docRef = await db.collection('calculations').add(calculation);
-    
+
     return {
       id: docRef.id,
-      expenditure,
+      expenditure: expenditureWithStatus,
+    };
+  },
+
+  list_households: async (req: AuthRequest) => {
+    const snapshot = await db.collection('households')
+      .where('members', 'array-contains', req.user!.uid)
+      .get();
+    return snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+  },
+
+  list_contributors: async (req: AuthRequest, params: any) => {
+    const { householdId } = params;
+    await assertHouseholdMember(req.user!.uid, householdId);
+    const snapshot = await db.collection('contributors')
+      .where('householdId', '==', householdId)
+      .get();
+    return snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+  },
+
+  list_bills: async (req: AuthRequest, params: any) => {
+    const { householdId } = params;
+    await assertHouseholdMember(req.user!.uid, householdId);
+    const snapshot = await db.collection('bills')
+      .where('householdId', '==', householdId)
+      .get();
+    return snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+  },
+
+  update_contributor: async (req: AuthRequest, params: any) => {
+    const { contributorId, name, income } = params;
+    const docRef = db.collection('contributors').doc(contributorId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      throw new Error('Contributor not found');
+    }
+    const data = snap.data() as any;
+    await assertHouseholdMember(req.user!.uid, data.householdId);
+
+    const updates: Record<string, any> = {};
+    if (name !== undefined) updates.name = name;
+    if (income !== undefined) updates.income = income;
+    if (Object.keys(updates).length === 0) {
+      return { id: contributorId, ...data };
+    }
+    await docRef.update(updates);
+    return { id: contributorId, ...data, ...updates };
+  },
+
+  remove_contributor: async (req: AuthRequest, params: any) => {
+    const { contributorId } = params;
+    const docRef = db.collection('contributors').doc(contributorId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      throw new Error('Contributor not found');
+    }
+    const data = snap.data() as any;
+    await assertHouseholdMember(req.user!.uid, data.householdId);
+    await docRef.delete();
+    return { success: true, id: contributorId };
+  },
+
+  get_calculation: async (req: AuthRequest, params: any) => {
+    const { calculationId } = params;
+    const snap = await db.collection('calculations').doc(calculationId).get();
+    if (!snap.exists) {
+      throw new Error('Calculation not found');
+    }
+    const data = snap.data() as any;
+    if (data.userId !== req.user!.uid) {
+      await assertHouseholdMember(req.user!.uid, data.householdId);
+    }
+    return { id: snap.id, ...data };
+  },
+
+  mark_transfer_paid: async (req: AuthRequest, params: any) => {
+    const { calculationId, transferIndex, status } = params;
+    const newStatus = status === 'pending' ? 'pending' : 'paid';
+
+    const docRef = db.collection('calculations').doc(calculationId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      throw new Error('Calculation not found');
+    }
+    const data = snap.data() as any;
+    if (data.userId !== req.user!.uid) {
+      await assertHouseholdMember(req.user!.uid, data.householdId);
+    }
+
+    const transfers: any[] = data?.result?.transfers || [];
+    if (transferIndex < 0 || transferIndex >= transfers.length) {
+      throw new Error(`transferIndex ${transferIndex} out of range (have ${transfers.length} transfers)`);
+    }
+
+    const updatedTransfers = transfers.map((t, i) =>
+      i === transferIndex ? { ...t, status: newStatus } : t
+    );
+
+    await docRef.update({
+      'result.transfers': updatedTransfers,
+      updatedAt: new Date().toISOString(),
+    });
+
+    return {
+      id: calculationId,
+      transferIndex,
+      transfer: updatedTransfers[transferIndex],
+    };
+  },
+
+  summarize_month: async (req: AuthRequest, params: any) => {
+    const { householdId, month } = params;
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new Error('month must be YYYY-MM (e.g. 2026-05)');
+    }
+    await assertHouseholdMember(req.user!.uid, householdId);
+
+    const snapshot = await db.collection('calculations')
+      .where('householdId', '==', householdId)
+      .get();
+
+    // createdAt is stored as ISO string by MCP; filter by month prefix in code.
+    const monthCalcs = snapshot.docs
+      .map((doc: any) => ({ id: doc.id, ...doc.data() }))
+      .filter((c: any) => typeof c.createdAt === 'string' && c.createdAt.startsWith(month));
+
+    let totalSharedBills = 0;
+    let totalIndividualBills = 0;
+    const perContributor: Record<string, { contribution: number; individualBills: number }> = {};
+    let transferTotal = 0;
+    let transferPaid = 0;
+    let transferPending = 0;
+    let amountTotal = 0;
+    let amountPaid = 0;
+    let amountPending = 0;
+
+    for (const calc of monthCalcs) {
+      const bills: any[] = calc.bills || [];
+      for (const b of bills) {
+        if (b.shared || b.isShared) {
+          totalSharedBills += Number(b.amount) || 0;
+        } else {
+          totalIndividualBills += Number(b.amount) || 0;
+        }
+      }
+
+      const contributions: Record<string, number> = calc?.result?.contributions || {};
+      for (const [name, amount] of Object.entries(contributions)) {
+        perContributor[name] ||= { contribution: 0, individualBills: 0 };
+        perContributor[name].contribution += Number(amount) || 0;
+      }
+
+      const individualByPerson: Record<string, any[]> = calc?.result?.individualBills || {};
+      for (const [name, list] of Object.entries(individualByPerson)) {
+        perContributor[name] ||= { contribution: 0, individualBills: 0 };
+        for (const b of list || []) {
+          perContributor[name].individualBills += Number(b.amount) || 0;
+        }
+      }
+
+      const transfers: any[] = calc?.result?.transfers || [];
+      for (const t of transfers) {
+        transferTotal += 1;
+        const amount = Number(t.amount) || 0;
+        amountTotal += amount;
+        if (t.status === 'paid') {
+          transferPaid += 1;
+          amountPaid += amount;
+        } else {
+          transferPending += 1;
+          amountPending += amount;
+        }
+      }
+    }
+
+    return {
+      householdId,
+      month,
+      calculationCount: monthCalcs.length,
+      totals: {
+        sharedBills: totalSharedBills,
+        individualBills: totalIndividualBills,
+        allBills: totalSharedBills + totalIndividualBills,
+      },
+      perContributor,
+      transfers: {
+        total: transferTotal,
+        paid: transferPaid,
+        pending: transferPending,
+        amountTotal,
+        amountPaid,
+        amountPending,
+      },
+      calculations: monthCalcs.map((c: any) => ({
+        id: c.id,
+        createdAt: c.createdAt,
+        transferCount: (c?.result?.transfers || []).length,
+      })),
     };
   },
 
@@ -468,18 +803,21 @@ const resourceHandlers: Record<string, any> = {
 
   contributors: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
+    await assertHouseholdMember(req.user!.uid, householdId);
     const querySnapshot = await db.collection('contributors').where('householdId', '==', householdId).get();
     return querySnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
   },
 
   bills: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
+    await assertHouseholdMember(req.user!.uid, householdId);
     const querySnapshot = await db.collection('bills').where('householdId', '==', householdId).get();
     return querySnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
   },
 
   history: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
+    await assertHouseholdMember(req.user!.uid, householdId);
 
     const mapAndSort = (snapshot: any) => {
       const history = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
@@ -514,59 +852,141 @@ const resourceHandlers: Record<string, any> = {
   },
 };
 
+function sendRpcError(
+  res: any,
+  id: string | number | null | undefined,
+  code: number,
+  message: string,
+  data?: any,
+) {
+  const response: MCPResponse = {
+    jsonrpc: '2.0',
+    id: id ?? null,
+    error: { code, message, ...(data !== undefined ? { data } : {}) },
+  };
+  // JSON-RPC errors are returned over HTTP 200 — HTTP status reserved for transport-level failures.
+  res.status(200).json(response);
+}
+
 // MCP endpoint
 router.post('/', authenticateOAuth, async (req: AuthRequest, res) => {
   const mcpReq: MCPRequest = req.body;
+
+  // Notifications: JSON-RPC requests without an id — no response expected.
+  const isNotification = mcpReq.id === undefined || mcpReq.id === null;
 
   try {
     let result: any;
 
     switch (mcpReq.method) {
+      case 'initialize': {
+        const clientVersion = mcpReq.params?.protocolVersion;
+        result = {
+          protocolVersion: clientVersion || PROTOCOL_VERSION,
+          capabilities: {
+            tools: { listChanged: false },
+            resources: { listChanged: false, subscribe: false },
+            prompts: { listChanged: false },
+          },
+          serverInfo: SERVER_INFO,
+        };
+        break;
+      }
+
+      case 'notifications/initialized':
+      case 'notifications/cancelled':
+      case 'notifications/roots/list_changed':
+        // Notifications expect no response body.
+        return res.status(202).end();
+
+      case 'ping':
+        result = {};
+        break;
+
       case 'tools/list':
         result = { tools };
         break;
 
-      case 'tools/call':
-        const { name, arguments: args } = mcpReq.params;
-        if (!toolHandlers[name]) {
-          throw new Error(`Unknown tool: ${name}`);
+      case 'tools/call': {
+        const params = mcpReq.params || {};
+        const { name, arguments: args } = params;
+        if (!name || !toolHandlers[name]) {
+          return sendRpcError(res, mcpReq.id, METHOD_NOT_FOUND, `Unknown tool: ${name}`);
         }
-        result = await toolHandlers[name](req, args);
+        try {
+          const toolResult = await toolHandlers[name](req, args || {});
+          result = {
+            content: [
+              { type: 'text', text: JSON.stringify(toolResult, null, 2) },
+            ],
+            isError: false,
+          };
+        } catch (toolError: any) {
+          // Tool execution errors are returned as result content with isError, per MCP spec —
+          // JSON-RPC errors are reserved for protocol-level failures.
+          result = {
+            content: [
+              { type: 'text', text: toolError?.message || 'Tool execution failed' },
+            ],
+            isError: true,
+          };
+        }
         break;
+      }
 
       case 'resources/list':
         result = { resources };
         break;
 
-      case 'resources/read':
-        const { uri } = mcpReq.params;
-        if (!resourceHandlers[uri]) {
-          throw new Error(`Unknown resource: ${uri}`);
+      case 'resources/read': {
+        const params = mcpReq.params || {};
+        const { uri } = params;
+        if (!uri || !resourceHandlers[uri]) {
+          return sendRpcError(res, mcpReq.id, METHOD_NOT_FOUND, `Unknown resource: ${uri}`);
         }
-        result = { contents: [{ uri, value: await resourceHandlers[uri](req, mcpReq.params) }] };
+        const resourceData = await resourceHandlers[uri](req, params);
+        result = {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(resourceData, null, 2),
+            },
+          ],
+        };
+        break;
+      }
+
+      case 'prompts/list':
+        result = { prompts: [] };
         break;
 
+      case 'prompts/get':
+        return sendRpcError(res, mcpReq.id, METHOD_NOT_FOUND, 'Prompts are not supported');
+
       default:
-        throw new Error(`Unknown method: ${mcpReq.method}`);
+        if (isNotification) {
+          return res.status(202).end();
+        }
+        return sendRpcError(res, mcpReq.id, METHOD_NOT_FOUND, `Method not found: ${mcpReq.method}`);
+    }
+
+    if (isNotification) {
+      return res.status(202).end();
     }
 
     const response: MCPResponse = {
       jsonrpc: '2.0',
-      id: mcpReq.id,
+      id: mcpReq.id ?? null,
       result,
     };
-
     res.json(response);
   } catch (error: any) {
-    const response: MCPResponse = {
-      jsonrpc: '2.0',
-      id: mcpReq.id,
-      error: {
-        code: -32603,
-        message: error.message || 'Internal error',
-      },
-    };
-    res.status(500).json(response);
+    console.error('MCP error:', error);
+    if (isNotification) {
+      return res.status(202).end();
+    }
+    return sendRpcError(res, mcpReq.id, INTERNAL_ERROR, error?.message || 'Internal error');
   }
 });
 

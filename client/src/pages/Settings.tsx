@@ -2,10 +2,10 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Copy, Key, Settings as SettingsIcon } from 'lucide-react';
 import { API_BASE_URL } from '../services/api';
 
-const AUTH_URL = 'https://us-central1-billsplitter-v2.cloudfunctions.net/api/auth/authorize';
-const TOKEN_URL = 'https://us-central1-billsplitter-v2.cloudfunctions.net/api/auth/token';
-const MCP_URL = 'https://us-central1-billsplitter-v2.cloudfunctions.net/api/mcp';
-const CLIENT_ID = '281838372829-5s0joua9orl92h2k61ghgi6gkfe6eob2.apps.googleusercontent.com';
+const AUTH_URL = `${API_BASE_URL}/auth/authorize`;
+const TOKEN_URL = `${API_BASE_URL}/auth/token`;
+const MCP_URL = `${API_BASE_URL}/mcp`;
+const CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID || '';
 
 function ConfigRow({ label, value }: { label: string; value: string }) {
   return (
@@ -61,8 +61,13 @@ export default function Settings() {
             <ConfigRow label="Authorization URL" value={AUTH_URL} />
             <ConfigRow label="Token URL" value={TOKEN_URL} />
             <ConfigRow label="MCP URL" value={MCP_URL} />
-            <ConfigRow label="Client ID" value={CLIENT_ID} />
+            <ConfigRow label="Client ID" value={CLIENT_ID || '(not configured)'} />
           </div>
+          {!CLIENT_ID && (
+            <p className="text-xs text-red-600 mt-4">
+              VITE_OAUTH_CLIENT_ID is not set. Add it to client/.env and rebuild.
+            </p>
+          )}
           <p className="text-xs text-gray-500 mt-4">
             Client Secret can be empty for Google OAuth ID token flow.
           </p>

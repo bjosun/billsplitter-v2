@@ -11,8 +11,37 @@ import { errorHandler } from './middleware/error';
 
 const app = express();
 
-app.use(cors({ origin: true }));
+app.use(cors({ origin: true, exposedHeaders: ['WWW-Authenticate'] }));
 app.use(express.json());
+
+// OAuth discovery — MCP clients read these to auto-configure the OAuth flow.
+const issuer = () => {
+  const host = process.env.FUNCTION_HOST || 'us-central1-billsplitter-v2.cloudfunctions.net';
+  return `https://${host}/api`;
+};
+
+app.get('/.well-known/oauth-protected-resource', (_req, res) => {
+  res.json({
+    resource: `${issuer()}/mcp`,
+    authorization_servers: [issuer()],
+    bearer_methods_supported: ['header'],
+    scopes_supported: ['openid', 'email', 'profile'],
+  });
+});
+
+app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+  const base = issuer();
+  res.json({
+    issuer: base,
+    authorization_endpoint: `${base}/auth/authorize`,
+    token_endpoint: `${base}/auth/token`,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
+    scopes_supported: ['openid', 'email', 'profile'],
+  });
+});
 
 // Routes
 app.use('/auth', authRoutes);
