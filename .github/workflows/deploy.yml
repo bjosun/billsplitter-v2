@@ -17,6 +17,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       - name: Install root dependencies
         run: npm ci
@@ -33,10 +34,12 @@ jobs:
           npm ci
           npm run build
 
-      - name: Write Firebase service account
-        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > /tmp/sa.json
-
       - name: Deploy to Firebase
         run: npx firebase deploy --project billsplitter-v2 --non-interactive
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+          APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
