@@ -1,0 +1,42 @@
+name: Deploy to Firebase
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install & build client
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install & build functions
+        working-directory: functions
+        run: |
+          npm ci
+          npm run build
+
+      - name: Write Firebase service account
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > /tmp/sa.json
+
+      - name: Deploy to Firebase
+        run: npx firebase deploy --project billsplitter-v2 --non-interactive
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/sa.json
