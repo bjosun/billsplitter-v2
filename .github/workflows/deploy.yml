@@ -18,9 +18,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-
-      - name: Install root dependencies
-        run: npm ci
+          cache-dependency-path: |
+            client/package-lock.json
+            functions/package-lock.json
 
       - name: Install & build client
         working-directory: client
