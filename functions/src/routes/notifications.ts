@@ -66,140 +66,148 @@ function buildCalculationEmail(
   const myTotalToPay = myShared + myIndivTotal;
   const myRemaining = result.targetRemainingBalance - myIndivTotal;
 
+  const ROW = (label: string, value: string, opts: { labelColor?: string; valueColor?: string; bold?: boolean; large?: boolean; topBorder?: string } = {}) =>
+    `<tr>
+      <td style="padding:10px 0;border-top:${opts.topBorder || 'none'};font-size:14px;line-height:1.5;color:${opts.labelColor || '#6b7280'};">${label}</td>
+      <td style="padding:10px 0;border-top:${opts.topBorder || 'none'};font-size:${opts.large ? '17px' : '14px'};line-height:1.5;text-align:right;color:${opts.valueColor || '#111827'};font-weight:${opts.bold ? '700' : '400'};">${value}</td>
+    </tr>`;
+
   const personRows = contributors
     .map(c => {
       const shared = result.contributions[c.name] || 0;
       const indiv = (result.individualBills[c.name] || []).reduce((s, b) => s + b.amount, 0);
       const total = shared + indiv;
       const remaining = result.targetRemainingBalance - indiv;
-      const highlight =
-        c.name === recipientName
-          ? 'background:#f0f4ff;font-weight:bold;'
-          : '';
-      return `<tr style="${highlight}">
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${c.name}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${kr(c.income)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;color:#4f46e5;">${kr(shared)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${indiv > 0 ? kr(indiv) : '&mdash;'}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:bold;">${kr(total)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;color:#16a34a;">${kr(remaining)}</td>
+      const isMe = c.name === recipientName;
+      const bg = isMe ? 'background:#f0f4ff;' : '';
+      const fw = isMe ? 'font-weight:700;' : '';
+      return `<tr style="${bg}">
+        <td style="padding:11px 14px;border-bottom:1px solid #e5e7eb;font-size:14px;line-height:1.5;${fw}">${c.name}${isMe ? ' <span style="font-size:11px;background:#c7d2fe;color:#3730a3;padding:1px 6px;border-radius:10px;font-weight:600;">Du</span>' : ''}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid #e5e7eb;font-size:13px;line-height:1.5;text-align:right;color:#6b7280;">${kr(c.income)}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid #e5e7eb;font-size:13px;line-height:1.5;text-align:right;color:#4f46e5;">${kr(shared)}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid #e5e7eb;font-size:13px;line-height:1.5;text-align:right;color:#6b7280;">${indiv > 0 ? kr(indiv) : '&mdash;'}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid #e5e7eb;font-size:13px;line-height:1.5;text-align:right;font-weight:700;">${kr(total)}</td>
+        <td style="padding:11px 14px;border-bottom:1px solid #e5e7eb;font-size:13px;line-height:1.5;text-align:right;color:#16a34a;font-weight:600;">${kr(remaining)}</td>
       </tr>`;
     })
     .join('');
 
   const indivSection =
     myIndivBills.length > 0
-      ? `<div style="margin-top:8px;">
-          <p style="font-size:13px;color:#6b7280;margin:0 0 4px;">Dina egna räkningar:</p>
-          ${myIndivBills
-            .map(
-              b => `<div style="display:flex;justify-content:space-between;font-size:13px;color:#6b7280;padding:2px 0;">
-                <span>${b.name}</span><span>${kr(b.amount)}</span>
-              </div>`
-            )
-            .join('')}
-        </div>`
+      ? `<tr><td colspan="2" style="padding:6px 0 0;">
+          <p style="margin:0 0 6px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;">Specifikation – egna räkningar</p>
+          <table style="width:100%;border-collapse:collapse;">
+            ${myIndivBills.map(b =>
+              `<tr>
+                <td style="padding:5px 0;font-size:13px;line-height:1.5;color:#6b7280;">${b.name}</td>
+                <td style="padding:5px 0;font-size:13px;line-height:1.5;text-align:right;color:#374151;">${kr(b.amount)}</td>
+              </tr>`).join('')}
+          </table>
+        </td></tr>`
       : '';
 
   const transfersSection =
     result.transfers.length > 0
-      ? `<div style="background:#f5f3ff;border-radius:8px;padding:16px;margin-top:16px;">
-          <h3 style="margin:0 0 10px;font-size:15px;color:#4f46e5;">Överföringar som behövs</h3>
-          ${result.transfers
-            .map(t => {
+      ? `<div style="background:#f5f3ff;border:1px solid #e0e7ff;border-radius:10px;padding:20px 22px;margin-top:24px;">
+          <p style="margin:0 0 14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6d28d9;">Överföringar som behövs</p>
+          <table style="width:100%;border-collapse:collapse;">
+            ${result.transfers.map(t => {
               const isFrom = t.from === recipientName;
               const isTo = t.to === recipientName;
               const color = isFrom ? '#dc2626' : isTo ? '#16a34a' : '#374151';
-              const note = isFrom ? ' (du betalar)' : isTo ? ' (du tar emot)' : '';
-              return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #e0e7ff;font-size:14px;">
-                <span style="color:${color};">${t.from} &rarr; ${t.to}${note}</span>
-                <strong>${kr(t.amount)}</strong>
-              </div>`;
-            })
-            .join('')}
+              const badge = isFrom
+                ? '<span style="font-size:11px;background:#fee2e2;color:#dc2626;padding:2px 7px;border-radius:10px;margin-left:6px;">du betalar</span>'
+                : isTo
+                ? '<span style="font-size:11px;background:#dcfce7;color:#16a34a;padding:2px 7px;border-radius:10px;margin-left:6px;">du tar emot</span>'
+                : '';
+              return `<tr>
+                <td style="padding:9px 0;border-bottom:1px solid #e0e7ff;font-size:14px;line-height:1.6;color:${color};">${t.from} &rarr; ${t.to}${badge}</td>
+                <td style="padding:9px 0;border-bottom:1px solid #e0e7ff;font-size:14px;line-height:1.6;text-align:right;font-weight:700;color:${color};">${kr(t.amount)}</td>
+              </tr>`;
+            }).join('')}
+          </table>
         </div>`
       : '';
 
   const historySection =
     recentHistory.length > 0
-      ? `<div style="margin-top:24px;border-top:1px solid #e5e7eb;padding-top:16px;">
-          <h3 style="margin:0 0 12px;font-size:15px;color:#374151;">Tidigare månader</h3>
-          ${recentHistory
-            .map(h => {
-              const me = h.contributors.find(c => c.name === recipientName);
-              if (!me) return '';
-              return `<div style="background:#f9fafb;border-radius:6px;padding:10px 12px;margin-bottom:8px;font-size:13px;">
-                <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-                  <span style="color:#6b7280;">${h.date}</span>
-                  <span style="color:#6b7280;">Gemensamt totalt: ${kr(h.sharedTotal)}</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-                  <span>Din andel: <strong>${kr(me.shouldPay)}</strong></span>
-                  <span>Totalt: <strong>${kr(me.totalToPay)}</strong></span>
-                  <span>Kvar: <strong style="color:#16a34a;">${kr(me.remaining)}</strong></span>
-                </div>
-              </div>`;
-            })
-            .join('')}
+      ? `<div style="margin-top:32px;padding-top:24px;border-top:2px solid #f3f4f6;">
+          <p style="margin:0 0 16px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;">Tidigare månader</p>
+          ${recentHistory.map(h => {
+            const me = h.contributors.find(c => c.name === recipientName);
+            if (!me) return '';
+            return `<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
+                <span style="font-size:14px;font-weight:600;color:#374151;">${h.date}</span>
+                <span style="font-size:12px;color:#9ca3af;">Gemensamt: ${kr(h.sharedTotal)}</span>
+              </div>
+              <table style="width:100%;border-collapse:collapse;">
+                <tr>
+                  <td style="font-size:13px;line-height:1.6;color:#6b7280;padding:0 0 2px;">Din andel gemensamt</td>
+                  <td style="font-size:13px;line-height:1.6;text-align:right;color:#4f46e5;font-weight:600;padding:0 0 2px;">${kr(me.shouldPay)}</td>
+                </tr>
+                <tr>
+                  <td style="font-size:13px;line-height:1.6;color:#6b7280;padding:2px 0;">Totalt att betala</td>
+                  <td style="font-size:13px;line-height:1.6;text-align:right;font-weight:700;padding:2px 0;">${kr(me.totalToPay)}</td>
+                </tr>
+                <tr>
+                  <td style="font-size:13px;line-height:1.6;color:#6b7280;padding:2px 0 0;border-top:1px solid #e5e7eb;">Kvar totalt</td>
+                  <td style="font-size:13px;line-height:1.6;text-align:right;font-weight:700;color:#16a34a;padding:2px 0 0;border-top:1px solid #e5e7eb;">${kr(me.remaining)}</td>
+                </tr>
+              </table>
+            </div>`;
+          }).join('')}
         </div>`
       : '';
 
   return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <div style="max-width:620px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.12);">
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BillSplitter – Månadssammanfattning</title>
+</head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+  <div style="max-width:620px;margin:40px auto 24px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.10);">
 
-    <div style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);padding:28px 32px;color:#fff;">
-      <h1 style="margin:0 0 4px;font-size:22px;font-weight:700;">Månadsberäkning</h1>
-      <p style="margin:0;opacity:.85;font-size:14px;">${calcDate}</p>
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);padding:32px 36px 28px;">
+      <p style="margin:0 0 4px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:rgba(255,255,255,.65);">BillSplitter</p>
+      <h1 style="margin:0 0 6px;font-size:24px;font-weight:700;color:#ffffff;line-height:1.3;">Månadsberäkning</h1>
+      <p style="margin:0;font-size:14px;color:rgba(255,255,255,.80);line-height:1.5;">${calcDate}</p>
     </div>
 
-    <div style="padding:24px 32px;">
-      <p style="font-size:16px;color:#374151;margin:0 0 20px;">Hej <strong>${recipientName}</strong>! Här är din sammanfattning för månaden.</p>
+    <!-- Body -->
+    <div style="padding:32px 36px;">
+      <p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:#374151;">Hej <strong style="color:#111827;">${recipientName}</strong>,<br>här är din ekonomiska sammanfattning för månaden.</p>
 
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:18px 20px;margin-bottom:20px;">
-        <h2 style="margin:0 0 12px;font-size:16px;color:#166534;">Din sammanfattning</h2>
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px;">
-          <span style="color:#6b7280;">Andel gemensamma utgifter</span>
-          <strong style="color:#4f46e5;">${kr(myShared)}</strong>
-        </div>
-        ${
-          myIndivBills.length > 0
-            ? `<div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:14px;">
-            <span style="color:#6b7280;">Egna räkningar</span>
-            <strong>${kr(myIndivTotal)}</strong>
-          </div>`
-            : ''
-        }
-        ${indivSection}
-        <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid #bbf7d0;margin-top:10px;">
-          <strong style="color:#166534;font-size:15px;">Totalt att betala</strong>
-          <strong style="color:#166534;font-size:18px;">${kr(myTotalToPay)}</strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:13px;">
-          <span style="color:#6b7280;">Kvar efter gemensam delning</span>
-          <span>${kr(result.targetRemainingBalance)}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:600;margin-top:2px;">
-          <span style="color:#374151;">Kvar totalt (inkl. egna räkn.)</span>
-          <span style="color:#16a34a;">${kr(myRemaining)}</span>
-        </div>
+      <!-- Personal summary card -->
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:22px 24px;margin-bottom:28px;">
+        <p style="margin:0 0 16px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#166534;">Din sammanfattning</p>
+        <table style="width:100%;border-collapse:collapse;">
+          ${ROW('Andel gemensamma utgifter', kr(myShared), { valueColor: '#4f46e5', bold: true })}
+          ${myIndivBills.length > 0 ? ROW('Egna räkningar', kr(myIndivTotal)) : ''}
+          ${indivSection}
+          ${ROW('Totalt att betala', kr(myTotalToPay), { topBorder: '2px solid #bbf7d0', labelColor: '#166534', valueColor: '#166534', bold: true, large: true })}
+          ${ROW('Kvar efter gemensam delning', kr(result.targetRemainingBalance), { labelColor: '#6b7280', valueColor: '#374151' })}
+          ${ROW('Kvar totalt (inkl. egna räkn.)', kr(myRemaining), { labelColor: '#374151', valueColor: '#16a34a', bold: true })}
+        </table>
       </div>
 
       ${transfersSection}
 
-      <h3 style="margin:20px 0 10px;font-size:15px;color:#374151;">Alla deltagare</h3>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <!-- All participants table -->
+      <p style="margin:${result.transfers.length > 0 ? '28px' : '0'} 0 12px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9ca3af;">Alla deltagare</p>
+      <div style="overflow-x:auto;border:1px solid #e5e7eb;border-radius:10px;">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:420px;">
           <thead>
             <tr style="background:#f9fafb;">
-              <th style="padding:8px 12px;text-align:left;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Person</th>
-              <th style="padding:8px 12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Inkomst</th>
-              <th style="padding:8px 12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Andel gem.</th>
-              <th style="padding:8px 12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Egna räkn.</th>
-              <th style="padding:8px 12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Totalt</th>
-              <th style="padding:8px 12px;text-align:right;color:#6b7280;font-weight:600;border-bottom:2px solid #e5e7eb;">Kvar</th>
+              <th style="padding:11px 14px;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;border-bottom:1px solid #e5e7eb;">Person</th>
+              <th style="padding:11px 14px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;border-bottom:1px solid #e5e7eb;">Inkomst</th>
+              <th style="padding:11px 14px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;border-bottom:1px solid #e5e7eb;">Andel gem.</th>
+              <th style="padding:11px 14px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;border-bottom:1px solid #e5e7eb;">Egna</th>
+              <th style="padding:11px 14px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;border-bottom:1px solid #e5e7eb;">Totalt</th>
+              <th style="padding:11px 14px;text-align:right;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;border-bottom:1px solid #e5e7eb;">Kvar</th>
             </tr>
           </thead>
           <tbody>${personRows}</tbody>
@@ -209,8 +217,9 @@ function buildCalculationEmail(
       ${historySection}
     </div>
 
-    <div style="background:#f9fafb;padding:16px 32px;text-align:center;border-top:1px solid #e5e7eb;">
-      <p style="margin:0;font-size:12px;color:#9ca3af;">BillSplitter &middot; Automatisk månadssammanfattning</p>
+    <!-- Footer -->
+    <div style="background:#f9fafb;padding:18px 36px;text-align:center;border-top:1px solid #e5e7eb;">
+      <p style="margin:0;font-size:12px;line-height:1.6;color:#9ca3af;">BillSplitter &middot; Automatisk månadssammanfattning<br>Du får det här mejlet för att du är medlem i ett delat hushåll.</p>
     </div>
   </div>
 </body>
