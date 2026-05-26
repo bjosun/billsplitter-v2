@@ -124,6 +124,43 @@ export async function revokeInvite(
   );
 }
 
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  households: string[];
+}
+
+export interface HouseholdMember {
+  uid: string;
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  joinedAt: unknown;
+}
+
+export async function getMyProfile(): Promise<UserProfile> {
+  const data = await apiRequest<{ user: UserProfile }>('/users/me');
+  return data.user;
+}
+
+export async function updateMyProfile(updates: { name?: string; phone?: string }): Promise<UserProfile> {
+  const data = await apiRequest<{ user: UserProfile }>('/users/me', {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+  return data.user;
+}
+
+export async function getHouseholdMembers(householdId: string): Promise<HouseholdMember[]> {
+  const data = await apiRequest<{ members: HouseholdMember[] }>(
+    `/households/${encodeURIComponent(householdId)}/members`
+  );
+  return data.members;
+}
+
 export async function sendCalculationNotification(
   calcId: string
 ): Promise<{ sent: string[]; skipped: string[] }> {

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { db } from '../config/firebase';
 import { HouseholdService } from '../services/household.service';
 import { InviteService } from '../services/invite.service';
 import { authenticateUser, AuthRequest } from '../middleware/auth';
@@ -202,6 +203,47 @@ router.get('/:householdId', authenticateUser, async (req: AuthRequest, res) => {
   } catch (error) {
     console.error('Get household error:', error);
     res.status(500).json({ error: 'Failed to fetch household' });
+  }
+});
+
+router.get('/:householdId/members', authenticateUser, async (req: AuthRequest, res) => {
+  try {
+    if (!req.user?.uid) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { householdId } = req.params;
+    const { allowed, status, error } = await ensureHouseholdMember(householdId, req.user.uid);
+    if (!allowed) {
+      return res.status(status!).json({ error });
+    }
+
+    const household = await HouseholdService.getHousehold(householdId);
+    if (!household) {
+      return res.status(404).json({ error: 'Household not found' });
+    }
+
+    const memberIds = Object.keys(household.members || {});
+    const memberProfiles = await Promise.all(
+      memberIds.map(async (uid) => {
+        const userDoc = await db.collection('users').doc(uid).get();
+        const userData = userDoc.exists ? userDoc.data()! : {};
+        const householdMember = household.members[uid];
+        return {
+          uid,
+          name: userData.name || householdMember?.name || '',
+          email: userData.email || '',
+          phone: userData.phone || '',
+          role: householdMember?.role || 'member',
+          joinedAt: householdMember?.joinedAt || null,
+        };
+      })
+    );
+
+    return res.json({ members: memberProfiles });
+  } catch (error) {
+    console.error('Get members error:', error);
+    return res.status(500).json({ error: 'Failed to fetch members' });
   }
 });
 
