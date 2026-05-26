@@ -270,6 +270,31 @@ router.post('/token', async (req, res) => {
   }
 });
 
+// Dynamic Client Registration (RFC 7591). Claude.ai MCP connectors call this
+// first to obtain a client_id. Since we proxy to a single pre-registered Google
+// OAuth client, we hand back that client_id to every requester and echo the
+// metadata they sent. No persistent storage needed.
+router.post('/register', (req, res) => {
+  const clientId = process.env.OAUTH_CLIENT_ID;
+  if (!clientId) {
+    return res.status(500).json({ error: 'OAuth not configured' });
+  }
+
+  const body = req.body || {};
+  const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
+
+  res.status(201).json({
+    client_id: clientId,
+    client_id_issued_at: Math.floor(Date.now() / 1000),
+    redirect_uris: redirectUris,
+    grant_types: body.grant_types || ['authorization_code', 'refresh_token'],
+    response_types: body.response_types || ['code'],
+    token_endpoint_auth_method: body.token_endpoint_auth_method || 'none',
+    scope: body.scope || 'openid email profile',
+    client_name: body.client_name,
+  });
+});
+
 router.post('/google', async (req, res) => {
   try {
     const { idToken } = req.body;

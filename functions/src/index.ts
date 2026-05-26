@@ -16,6 +16,8 @@ const app = express();
 
 app.use(cors({ origin: true, exposedHeaders: ['WWW-Authenticate'] }));
 app.use(express.json());
+// Standard OAuth /token bodies are application/x-www-form-urlencoded.
+app.use(express.urlencoded({ extended: true }));
 
 // OAuth discovery — MCP clients read these to auto-configure the OAuth flow.
 const issuer = () => {
@@ -38,9 +40,13 @@ app.get('/.well-known/oauth-authorization-server', (_req, res) => {
     issuer: base,
     authorization_endpoint: `${base}/auth/authorize`,
     token_endpoint: `${base}/auth/token`,
+    // Dynamic Client Registration (RFC 7591) — required by Claude.ai MCP connectors
+    // so the client can obtain a client_id before starting OAuth. Without it, the
+    // connector setup fails with step=start_error.
+    registration_endpoint: `${base}/auth/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
-    code_challenge_methods_supported: ['S256', 'plain'],
+    code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
     scopes_supported: ['openid', 'email', 'profile'],
   });
