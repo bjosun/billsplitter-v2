@@ -66,9 +66,10 @@ router.get('/callback', async (req, res) => {
   const { claudeRedirectUri, claudeState } = pending;
 
   if (error) {
+    const separator = claudeRedirectUri.includes('?') ? '&' : '?';
     const params = new URLSearchParams({ error });
     if (claudeState) params.set('state', claudeState);
-    return res.redirect(`${claudeRedirectUri}?${params.toString()}`);
+    return res.redirect(`${claudeRedirectUri}${separator}${params.toString()}`);
   }
 
   if (!code) {
@@ -99,23 +100,26 @@ router.get('/callback', async (req, res) => {
 
     if (!tokenResponse.ok) {
       console.error('Token exchange failed:', tokenJson);
+      const sep = claudeRedirectUri.includes('?') ? '&' : '?';
       const params = new URLSearchParams({ error: 'token_exchange_failed' });
       if (claudeState) params.set('state', claudeState);
-      return res.redirect(`${claudeRedirectUri}?${params.toString()}`);
+      return res.redirect(`${claudeRedirectUri}${sep}${params.toString()}`);
     }
 
     // Pass the id_token back to Claude Desktop as the access_token
     // (our MCP middleware validates it via verifyIdToken / getTokenInfo)
     const accessToken = tokenJson.id_token || tokenJson.access_token;
 
+    const separator = claudeRedirectUri.includes('?') ? '&' : '?';
     const callbackParams = new URLSearchParams({ code: accessToken });
     if (claudeState) callbackParams.set('state', claudeState);
-    return res.redirect(`${claudeRedirectUri}?${callbackParams.toString()}`);
+    return res.redirect(`${claudeRedirectUri}${separator}${callbackParams.toString()}`);
   } catch (err) {
     console.error('Callback error:', err);
+    const separator = claudeRedirectUri.includes('?') ? '&' : '?';
     const params = new URLSearchParams({ error: 'server_error' });
     if (claudeState) params.set('state', claudeState);
-    return res.redirect(`${claudeRedirectUri}?${params.toString()}`);
+    return res.redirect(`${claudeRedirectUri}${separator}${params.toString()}`);
   }
 });
 
