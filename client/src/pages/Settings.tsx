@@ -50,6 +50,7 @@ function MemberRow({
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(member.name);
   const [editPhone, setEditPhone] = useState(member.phone);
+  const [editEmail, setEditEmail] = useState(member.email);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -57,8 +58,8 @@ function MemberRow({
     setSaving(true);
     setError('');
     try {
-      const updated = await updateMemberProfile(member.uid, { name: editName, phone: editPhone });
-      onSaved({ ...member, name: updated.name, phone: updated.phone || '' });
+      const updated = await updateMemberProfile(member.uid, { name: editName, phone: editPhone, email: editEmail });
+      onSaved({ ...member, name: updated.name, phone: updated.phone || '', email: updated.email || '' });
       setEditing(false);
     } catch {
       setError('Kunde inte spara');
@@ -74,12 +75,19 @@ function MemberRow({
           <div className="w-9 h-9 rounded-full bg-indigo-200 text-indigo-800 flex items-center justify-center text-sm font-bold shrink-0">
             {editName ? editName[0].toUpperCase() : '?'}
           </div>
-          <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
             <input
               type="text"
               value={editName}
               onChange={e => setEditName(e.target.value)}
               placeholder="Namn"
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <input
+              type="email"
+              value={editEmail}
+              onChange={e => setEditEmail(e.target.value)}
+              placeholder="E-postadress"
               className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <input
@@ -162,6 +170,7 @@ export default function Settings() {
   const [profileLoading, setProfileLoading] = useState(true);
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
@@ -177,6 +186,7 @@ export default function Settings() {
         setProfile(p);
         setEditName(p.name);
         setEditPhone(p.phone || '');
+        setEditEmail(p.email || '');
       })
       .catch(console.error)
       .finally(() => setProfileLoading(false));
@@ -209,7 +219,7 @@ export default function Settings() {
     setSaving(true);
     setSaveMessage('');
     try {
-      const updated = await updateMyProfile({ name: editName, phone: editPhone });
+      const updated = await updateMyProfile({ name: editName, phone: editPhone, email: editEmail });
       setProfile(updated);
       setSaveMessage('Profil sparad!');
       setTimeout(() => setSaveMessage(''), 3000);
@@ -259,12 +269,13 @@ export default function Settings() {
                   E-postadress
                 </label>
                 <input
-                  type="text"
-                  value={profile?.email || ''}
-                  readOnly
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                  type="email"
+                  value={editEmail}
+                  onChange={e => setEditEmail(e.target.value)}
+                  placeholder="din@email.se"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                <p className="text-xs text-gray-400 mt-1">E-postadressen används för att matcha e-postutskick och kan inte ändras här.</p>
+                <p className="text-xs text-gray-400 mt-1">Används för e-postutskick. Påverkar inte din inloggning.</p>
               </div>
 
               <div>

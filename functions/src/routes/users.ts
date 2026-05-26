@@ -10,9 +10,12 @@ router.put('/me', authenticateUser, async (req: AuthRequest, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const { name, phone } = req.body as { name?: string; phone?: string };
+    const { name, phone, email } = req.body as { name?: string; phone?: string; email?: string };
     if (name !== undefined && typeof name !== 'string') {
       return res.status(400).json({ error: 'name must be a string' });
+    }
+    if (email !== undefined && (typeof email !== 'string' || !email.includes('@'))) {
+      return res.status(400).json({ error: 'Invalid email address' });
     }
 
     const updates: Record<string, unknown> = {
@@ -20,6 +23,7 @@ router.put('/me', authenticateUser, async (req: AuthRequest, res) => {
     };
     if (name !== undefined) updates.name = name.trim();
     if (phone !== undefined) updates.phone = phone.trim();
+    if (email !== undefined) updates.email = email.trim().toLowerCase();
 
     await db.collection('users').doc(req.user.uid).set(updates, { merge: true });
 
@@ -102,10 +106,14 @@ router.put('/:userId', authenticateUser, async (req: AuthRequest, res) => {
       return res.status(403).json({ error: 'Must be admin of a shared household to edit member profiles' });
     }
 
-    const { name, phone } = req.body as { name?: string; phone?: string };
+    const { name, phone, email } = req.body as { name?: string; phone?: string; email?: string };
+    if (email !== undefined && (typeof email !== 'string' || !email.includes('@'))) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
     const updates: Record<string, unknown> = { updatedAt: admin.firestore.Timestamp.now() };
     if (name !== undefined) updates.name = (name as string).trim();
     if (phone !== undefined) updates.phone = (phone as string).trim();
+    if (email !== undefined) updates.email = (email as string).trim().toLowerCase();
 
     await db.collection('users').doc(userId).set(updates, { merge: true });
     const updated = await db.collection('users').doc(userId).get();

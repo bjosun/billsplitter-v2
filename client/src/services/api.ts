@@ -146,7 +146,7 @@ export async function getMyProfile(): Promise<UserProfile> {
   return data.user;
 }
 
-export async function updateMyProfile(updates: { name?: string; phone?: string }): Promise<UserProfile> {
+export async function updateMyProfile(updates: { name?: string; phone?: string; email?: string }): Promise<UserProfile> {
   const data = await apiRequest<{ user: UserProfile }>('/users/me', {
     method: 'PUT',
     body: JSON.stringify(updates),
@@ -156,7 +156,7 @@ export async function updateMyProfile(updates: { name?: string; phone?: string }
 
 export async function updateMemberProfile(
   userId: string,
-  updates: { name?: string; phone?: string }
+  updates: { name?: string; phone?: string; email?: string }
 ): Promise<UserProfile> {
   const data = await apiRequest<{ user: UserProfile }>(`/users/${encodeURIComponent(userId)}`, {
     method: 'PUT',
