@@ -42,22 +42,37 @@ app.get('/.well-known/oauth-protected-resource', (_req, res) => {
   });
 });
 
-app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+// Shared metadata for both OAuth 2.0 AS Metadata (RFC 8414) and OpenID Connect
+// Discovery 1.0. Claude.ai MCP connectors append /.well-known/openid-configuration
+// to the issuer URL (OIDC convention) — without this endpoint they fail with
+// step=start_error.
+const buildAuthServerMetadata = () => {
   const base = issuer();
-  res.json({
+  return {
     issuer: base,
     authorization_endpoint: `${base}/auth/authorize`,
     token_endpoint: `${base}/auth/token`,
-    // Dynamic Client Registration (RFC 7591) — required by Claude.ai MCP connectors
-    // so the client can obtain a client_id before starting OAuth. Without it, the
-    // connector setup fails with step=start_error.
+    // Dynamic Client Registration (RFC 7591) — required so the client can obtain
+    // a client_id before starting OAuth.
     registration_endpoint: `${base}/auth/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
     scopes_supported: ['openid', 'email', 'profile'],
-  });
+    // OIDC-specific fields. We don't actually run a userinfo endpoint, but the
+    // id_token returned by Google contains sub/email/name which is what callers need.
+    subject_types_supported: ['public'],
+    id_token_signing_alg_values_supported: ['RS256'],
+  };
+};
+
+app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+  res.json(buildAuthServerMetadata());
+});
+
+app.get('/.well-known/openid-configuration', (_req, res) => {
+  res.json(buildAuthServerMetadata());
 });
 
 // Routes
