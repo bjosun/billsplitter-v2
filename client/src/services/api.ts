@@ -181,4 +181,28 @@ export async function sendCalculationNotification(
   });
 }
 
+export interface BillGroup {
+  id: string;
+  label: string;
+  patterns: string[];
+}
+
+export interface BillGroupingSettings {
+  enabled: boolean;
+  groups: BillGroup[];
+}
+
+export async function getBillGrouping(): Promise<BillGroupingSettings> {
+  const data = await apiRequest<{ billGrouping: BillGroupingSettings }>('/users/me/bill-groups');
+  return data.billGrouping;
+}
+
+export async function saveBillGrouping(settings: BillGroupingSettings): Promise<BillGroupingSettings> {
+  const data = await apiRequest<{ billGrouping: BillGroupingSettings }>('/users/me/bill-groups', {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  });
+  return data.billGrouping;
+}
+
 export { API_BASE_URL };

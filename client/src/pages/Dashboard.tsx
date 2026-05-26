@@ -12,10 +12,12 @@ import {
   createInvite,
   ensureCurrentUser,
   getHouseholds,
+  getBillGrouping,
   joinHousehold,
   listInvites,
   revokeInvite,
   sendCalculationNotification,
+  type BillGroupingSettings,
 } from '../services/api';
 import { calculateExpenditure } from '../utils/calculations';
 import type { Household, Invite } from '../types';
@@ -48,6 +50,27 @@ const TOP_BILLS_PER_CATEGORY = 8;
 
 type SankeyRange = 'month' | 'quarter' | 'year';
 type SankeyMode = 'calendar' | 'rolling';
+
+const applyBillGrouping = (
+  totals: Record<string, number>,
+  settings: BillGroupingSettings
+): Record<string, number> => {
+  if (!settings.enabled || settings.groups.length === 0) return totals;
+  const ungrouped: Record<string, number> = {};
+  const grouped: Record<string, number> = {};
+  Object.entries(totals).forEach(([name, value]) => {
+    const match = settings.groups.find((g) =>
+      g.label &&
+      g.patterns.some((p) => p.trim() && name.toLowerCase().includes(p.trim().toLowerCase()))
+    );
+    if (match) {
+      grouped[match.label] = (grouped[match.label] || 0) + value;
+    } else {
+      ungrouped[name] = value;
+    }
+  });
+  return { ...ungrouped, ...grouped };
+};
 
 const isMissingIndexError = (error: unknown): boolean => {
   const maybeError = error as { code?: string; message?: string };
@@ -148,6 +171,7 @@ export default function Dashboard() {
   const [sankeyRange, setSankeyRange] = useState<SankeyRange>('month');
   const [sankeyMode, setSankeyMode] = useState<SankeyMode>('calendar');
   const [resendStatus, setResendStatus] = useState<{ sent: string[]; skipped: string[] } | 'sending' | null>(null);
+  const [billGrouping, setBillGrouping] = useState<BillGroupingSettings>({ enabled: false, groups: [] });
 
   const selectedHousehold = useMemo(
     () => households.find((household) => household.id === selectedHouseholdId) || households[0],
@@ -157,6 +181,8 @@ export default function Dashboard() {
   const loadDashboardData = async (user: FirebaseUser) => {
     const token = await user.getIdToken();
     await ensureCurrentUser(token);
+
+    getBillGrouping().then(setBillGrouping).catch(() => {});
 
     const householdsData = await getHouseholds(token);
     setHouseholds(householdsData);
@@ -602,9 +628,9 @@ export default function Dashboard() {
       }
     };
 
-    // Stage 2 -> Stage 3: category -> specific bill
-    reduceToTopN(sharedBillTotals, SHARED_POOL_LABEL, TOP_BILLS_PER_CATEGORY);
-    reduceToTopN(individualBillTotals, INDIVIDUAL_BILLS_LABEL, TOP_BILLS_PER_CATEGORY);
+    // Stage 2 -> Stage 3: category -> specific bill (apply user-configured grouping first)
+    reduceToTopN(applyBillGrouping(sharedBillTotals, billGrouping), SHARED_POOL_LABEL, TOP_BILLS_PER_CATEGORY);
+    reduceToTopN(applyBillGrouping(individualBillTotals, billGrouping), INDIVIDUAL_BILLS_LABEL, TOP_BILLS_PER_CATEGORY);
 
     const flows = Array.from(flowSums.entries()).map(([key, amount]) => {
       const [from, to] = key.split('__');
@@ -666,7 +692,7 @@ export default function Dashboard() {
       stageCount: hasStage3 ? 3 : 2,
       peopleCount,
     };
-  }, [sankeySourceCalculations]);
+  }, [sankeySourceCalculations, billGrouping]);
 
   const sankeyWindowLabel = useMemo(() => {
     if (sankeyMode === 'rolling') {

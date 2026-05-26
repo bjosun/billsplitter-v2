@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Copy, Key, Settings as SettingsIcon, User, Users, Phone, Mail, Save, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, Copy, Key, Plus, Settings as SettingsIcon, Tag, Trash2, User, Users, Phone, Mail, Save, ChevronDown, ChevronUp } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import {
   API_BASE_URL,
@@ -8,8 +8,12 @@ import {
   updateMemberProfile,
   getHouseholds,
   getHouseholdMembers,
+  getBillGrouping,
+  saveBillGrouping,
   type UserProfile,
   type HouseholdMember,
+  type BillGroup,
+  type BillGroupingSettings,
 } from '../services/api';
 import type { Household } from '../types';
 
@@ -163,6 +167,8 @@ function MemberRow({
   );
 }
 
+type SettingsTab = 'profil' | 'gruppering' | 'mcp';
+
 export default function Settings() {
   const navigate = useNavigate();
 
@@ -179,6 +185,13 @@ export default function Settings() {
   const [expandedHousehold, setExpandedHousehold] = useState<string | null>(null);
   const [membersLoading, setMembersLoading] = useState<Record<string, boolean>>({});
   const [adminHouseholds, setAdminHouseholds] = useState<Set<string>>(new Set());
+
+  const [activeTab, setActiveTab] = useState<SettingsTab>('profil');
+  const [billGroupingEnabled, setBillGroupingEnabled] = useState(false);
+  const [billGroups, setBillGroups] = useState<BillGroup[]>([]);
+  const [billGroupsLoading, setBillGroupsLoading] = useState(true);
+  const [billGroupsSaving, setBillGroupsSaving] = useState(false);
+  const [billGroupsMsg, setBillGroupsMsg] = useState('');
 
   useEffect(() => {
     getMyProfile()
@@ -215,6 +228,16 @@ export default function Settings() {
       .finally(() => setMembersLoading(prev => ({ ...prev, [expandedHousehold!]: false })));
   }, [expandedHousehold, membersByHousehold, profile?.email]);
 
+  useEffect(() => {
+    getBillGrouping()
+      .then((s: BillGroupingSettings) => {
+        setBillGroupingEnabled(s.enabled);
+        setBillGroups(s.groups);
+      })
+      .catch(console.error)
+      .finally(() => setBillGroupsLoading(false));
+  }, []);
+
   const handleSaveProfile = async () => {
     setSaving(true);
     setSaveMessage('');
@@ -227,6 +250,51 @@ export default function Settings() {
       setSaveMessage('Kunde inte spara. Försök igen.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const addGroup = () =>
+    setBillGroups((prev) => [...prev, { id: crypto.randomUUID(), label: '', patterns: [''] }]);
+
+  const removeGroup = (id: string) =>
+    setBillGroups((prev) => prev.filter((g) => g.id !== id));
+
+  const updateGroupLabel = (id: string, label: string) =>
+    setBillGroups((prev) => prev.map((g) => (g.id === id ? { ...g, label } : g)));
+
+  const addPattern = (groupId: string) =>
+    setBillGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, patterns: [...g.patterns, ''] } : g))
+    );
+
+  const updatePattern = (groupId: string, i: number, value: string) =>
+    setBillGroups((prev) =>
+      prev.map((g) => {
+        if (g.id !== groupId) return g;
+        const patterns = [...g.patterns];
+        patterns[i] = value;
+        return { ...g, patterns };
+      })
+    );
+
+  const removePattern = (groupId: string, i: number) =>
+    setBillGroups((prev) =>
+      prev.map((g) =>
+        g.id === groupId ? { ...g, patterns: g.patterns.filter((_, idx) => idx !== i) } : g
+      )
+    );
+
+  const handleSaveBillGrouping = async () => {
+    setBillGroupsSaving(true);
+    setBillGroupsMsg('');
+    try {
+      await saveBillGrouping({ enabled: billGroupingEnabled, groups: billGroups });
+      setBillGroupsMsg('Sparat!');
+      setTimeout(() => setBillGroupsMsg(''), 3000);
+    } catch {
+      setBillGroupsMsg('Kunde inte spara. Försök igen.');
+    } finally {
+      setBillGroupsSaving(false);
     }
   };
 
@@ -252,6 +320,28 @@ export default function Settings() {
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
 
+        <div className="flex bg-white rounded-xl shadow-sm border border-gray-200 p-1">
+          {(['profil', 'gruppering', 'mcp'] as SettingsTab[]).map((tab) => {
+            const labels: Record<SettingsTab, string> = {
+              profil: 'Profil',
+              gruppering: 'Räkninggruppering',
+              mcp: 'MCP',
+            };
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition ${
+                  activeTab === tab ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                {labels[tab]}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'profil' && (<>
         {/* Profile section */}
         <div className="bg-white rounded-xl shadow-md p-6">
           <h2 className="text-xl font-semibold mb-5 flex items-center gap-2">
@@ -381,23 +471,133 @@ export default function Settings() {
           </div>
         )}
 
-        {/* MCP section */}
-        <div className="bg-white rounded-xl shadow-md p-6">
-          <h2 className="text-xl font-semibold mb-4 flex items-center">
-            <Key className="h-6 w-6 mr-2 text-indigo-600" />
-            MCP OAuth-konfiguration
-          </h2>
-          <p className="text-gray-600 mb-4 text-sm">
-            Använd dessa värden i Claude Desktop/Claude Code MCP-inställningar för OAuth.
-          </p>
-          <div className="space-y-3">
-            <ConfigRow label="Authorization URL" value={AUTH_URL} />
-            <ConfigRow label="Token URL" value={TOKEN_URL} />
-            <ConfigRow label="MCP URL" value={MCP_URL} />
-            <ConfigRow label="Client ID" value={CLIENT_ID || '(not configured)'} />
+        </>)}
+
+        {activeTab === 'gruppering' && (
+          <div className="bg-white rounded-xl shadow-md p-6">
+            <h2 className="text-xl font-semibold mb-2 flex items-center gap-2">
+              <Tag className="h-5 w-5 text-indigo-600" />
+              Räkninggruppering
+            </h2>
+            <p className="text-sm text-gray-500 mb-5">
+              Gruppera räkningar med liknande namn till en gemensam post i Sankey-diagrammet.
+              Varje grupp matchar räkningar vars namn innehåller minst ett av de angivna uttrycken (skiftlägesokänsligt).
+            </p>
+
+            {billGroupsLoading ? (
+              <p className="text-sm text-gray-500">Laddar…</p>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-5 pb-5 border-b border-gray-100">
+                  <input
+                    id="grouping-toggle"
+                    type="checkbox"
+                    checked={billGroupingEnabled}
+                    onChange={(e) => setBillGroupingEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                  />
+                  <label htmlFor="grouping-toggle" className="text-sm font-medium text-gray-700 cursor-pointer">
+                    Aktivera gruppering i diagram
+                  </label>
+                </div>
+
+                <div className="space-y-4">
+                  {billGroups.map((group) => (
+                    <div key={group.id} className="border border-gray-200 rounded-xl p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={group.label}
+                          onChange={(e) => updateGroupLabel(group.id, e.target.value)}
+                          placeholder="Gruppnamn (t.ex. Bolån)"
+                          className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          onClick={() => removeGroup(group.id)}
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                          title="Ta bort grupp"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="space-y-1.5 pl-1">
+                        <p className="text-xs font-medium text-gray-500 mb-2">Matchar räkningar vars namn innehåller:</p>
+                        {group.patterns.map((pattern, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={pattern}
+                              onChange={(e) => updatePattern(group.id, i, e.target.value)}
+                              placeholder="t.ex. Lån, SBAB, Nordea"
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <button
+                              onClick={() => removePattern(group.id, i)}
+                              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                              title="Ta bort matchning"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => addPattern(group.id)}
+                          className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 mt-1"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Lägg till matchning
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  <button
+                    onClick={addGroup}
+                    className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 hover:border-indigo-400 text-gray-500 hover:text-indigo-600 rounded-xl py-3 text-sm font-medium transition"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Ny grupp
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3 mt-5 pt-5 border-t border-gray-100">
+                  <button
+                    onClick={handleSaveBillGrouping}
+                    disabled={billGroupsSaving}
+                    className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm font-medium"
+                  >
+                    <Save className="h-4 w-4" />
+                    {billGroupsSaving ? 'Sparar…' : 'Spara gruppering'}
+                  </button>
+                  {billGroupsMsg && (
+                    <span className={`text-sm ${billGroupsMsg.includes('Kunde') ? 'text-red-600' : 'text-green-600'}`}>
+                      {billGroupsMsg}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
-          <ConfigRow label="API Base URL" value={API_BASE_URL} />
-        </div>
+        )}
+
+        {activeTab === 'mcp' && (
+          <div className="bg-white rounded-xl shadow-md p-6">
+            <h2 className="text-xl font-semibold mb-4 flex items-center">
+              <Key className="h-6 w-6 mr-2 text-indigo-600" />
+              MCP OAuth-konfiguration
+            </h2>
+            <p className="text-gray-600 mb-4 text-sm">
+              Använd dessa värden i Claude Desktop/Claude Code MCP-inställningar för OAuth.
+            </p>
+            <div className="space-y-3">
+              <ConfigRow label="Authorization URL" value={AUTH_URL} />
+              <ConfigRow label="Token URL" value={TOKEN_URL} />
+              <ConfigRow label="MCP URL" value={MCP_URL} />
+              <ConfigRow label="Client ID" value={CLIENT_ID || '(not configured)'} />
+            </div>
+            <ConfigRow label="API Base URL" value={API_BASE_URL} />
+          </div>
+        )}
 
       </div>
     </div>

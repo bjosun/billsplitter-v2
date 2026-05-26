@@ -124,4 +124,53 @@ router.put('/:userId', authenticateUser, async (req: AuthRequest, res) => {
   }
 });
 
+router.get('/me/bill-groups', authenticateUser, async (req: AuthRequest, res) => {
+  try {
+    if (!req.user?.uid) return res.status(401).json({ error: 'Unauthorized' });
+    const doc = await db.collection('users').doc(req.user.uid).get();
+    const data = doc.data() || {};
+    return res.json({
+      billGrouping: {
+        enabled: data.billGroupingEnabled ?? false,
+        groups: data.billGroups ?? [],
+      },
+    });
+  } catch (error) {
+    console.error('Get bill groups error:', error);
+    return res.status(500).json({ error: 'Failed to fetch bill groups' });
+  }
+});
+
+router.put('/me/bill-groups', authenticateUser, async (req: AuthRequest, res) => {
+  try {
+    if (!req.user?.uid) return res.status(401).json({ error: 'Unauthorized' });
+    const { enabled, groups } = req.body as { enabled: unknown; groups: unknown };
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be a boolean' });
+    }
+    if (!Array.isArray(groups)) {
+      return res.status(400).json({ error: 'groups must be an array' });
+    }
+    for (const g of groups) {
+      const group = g as Record<string, unknown>;
+      if (
+        typeof group.id !== 'string' ||
+        typeof group.label !== 'string' ||
+        !Array.isArray(group.patterns) ||
+        (group.patterns as unknown[]).some((p) => typeof p !== 'string')
+      ) {
+        return res.status(400).json({ error: 'Invalid group structure: each group needs id, label, and patterns string[]' });
+      }
+    }
+    await db.collection('users').doc(req.user.uid).set(
+      { billGroupingEnabled: enabled, billGroups: groups, updatedAt: admin.firestore.Timestamp.now() },
+      { merge: true }
+    );
+    return res.json({ billGrouping: { enabled, groups } });
+  } catch (error) {
+    console.error('Save bill groups error:', error);
+    return res.status(500).json({ error: 'Failed to save bill groups' });
+  }
+});
+
 export default router;

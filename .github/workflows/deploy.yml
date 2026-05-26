@@ -41,10 +41,13 @@ jobs:
           npm ci
           npm run build
 
+      - name: Decode service account key
+        run: echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}" | base64 -d > $HOME/gcp-key.json
+
       - name: Deploy to Firebase
         run: npx firebase deploy --project billsplitter-v2 --non-interactive
         env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          GOOGLE_APPLICATION_CREDENTIALS: $HOME/gcp-key.json
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
