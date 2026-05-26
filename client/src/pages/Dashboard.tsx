@@ -62,9 +62,13 @@ const applyBillGrouping = (
     const match = settings.groups.find((g) =>
       g.label &&
       g.patterns.some((p) =>
-        p.split(',').map((s) => s.trim()).filter(Boolean).some((token) =>
-          name.toLowerCase().includes(token.toLowerCase())
-        )
+        p.split(',').map((s) => s.trim()).filter(Boolean).some((token) => {
+          try {
+            return new RegExp(token, 'i').test(name);
+          } catch {
+            return name.toLowerCase().includes(token.toLowerCase());
+          }
+        })
       )
     );
     if (match) {
