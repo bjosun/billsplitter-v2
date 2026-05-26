@@ -100,6 +100,8 @@ const getCalculationInsights = (calc: Calculation) => {
     const paidByBills = indivBillsForPerson.reduce((s, b) => s + b.amount, 0);
     const shouldPay = contributions[name] || 0;
     const remaining = remainingAmounts[name] ?? Math.max(0, income - (shouldPay + paidByBills));
+    const totalToPay = shouldPay + paidByBills;
+    const totalRemaining = remaining - paidByBills;
 
     return {
       name,
@@ -107,6 +109,8 @@ const getCalculationInsights = (calc: Calculation) => {
       paidByBills,
       shouldPay,
       remaining,
+      totalToPay,
+      totalRemaining,
     };
   });
 
@@ -364,7 +368,9 @@ export default function History() {
                                 <th className="py-2 pr-4 font-medium">Inkomst</th>
                                 <th className="py-2 pr-4 font-medium">Egna räkningar</th>
                                 <th className="py-2 pr-4 font-medium">Andel gemensamt</th>
-                                <th className="py-2 font-medium">Kvar efter delning</th>
+                                <th className="py-2 pr-4 font-medium">Totalt att betala</th>
+                                <th className="py-2 pr-4 font-medium">Kvar delning</th>
+                                <th className="py-2 font-medium text-green-700">Kvar totalt</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -372,9 +378,11 @@ export default function History() {
                                 <tr key={`${calc.id}-${person.name}`} className="border-b last:border-b-0">
                                   <td className="py-2 pr-4 font-medium text-gray-800">{person.name}</td>
                                   <td className="py-2 pr-4 text-gray-700">{formatCurrency(person.income)}</td>
-                                  <td className="py-2 pr-4 text-gray-700">{formatCurrency(person.paidByBills)}</td>
-                                  <td className="py-2 pr-4 text-gray-700">{formatCurrency(person.shouldPay)}</td>
-                                  <td className="py-2 text-gray-900 font-semibold">{formatCurrency(person.remaining)}</td>
+                                  <td className="py-2 pr-4 text-gray-700">{person.paidByBills > 0 ? formatCurrency(person.paidByBills) : '—'}</td>
+                                  <td className="py-2 pr-4 text-indigo-700 font-medium">{formatCurrency(person.shouldPay)}</td>
+                                  <td className="py-2 pr-4 font-semibold text-gray-900">{formatCurrency(person.totalToPay)}</td>
+                                  <td className="py-2 pr-4 text-gray-500 text-xs">{formatCurrency(person.remaining)}</td>
+                                  <td className="py-2 font-semibold text-green-700">{formatCurrency(person.totalRemaining)}</td>
                                 </tr>
                               ))}
                             </tbody>

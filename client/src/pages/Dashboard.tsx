@@ -146,7 +146,6 @@ export default function Dashboard() {
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string>('');
   const [sankeyRange, setSankeyRange] = useState<SankeyRange>('month');
   const [sankeyMode, setSankeyMode] = useState<SankeyMode>('calendar');
-  const [migrationStatus, setMigrationStatus] = useState<string>('');
 
   const selectedHousehold = useMemo(
     () => households.find((household) => household.id === selectedHouseholdId) || households[0],
@@ -347,50 +346,6 @@ export default function Dashboard() {
     } catch (error) {
       console.error('Error revoking invite:', error);
       setErrorMessage((error as Error).message || 'Failed to revoke invite');
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleMigrateCalculations = async () => {
-    try {
-      setActionLoading(true);
-      setMigrationStatus('Startar migration...');
-      setErrorMessage('');
-
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) {
-        throw new Error('Not authenticated');
-      }
-
-      const response = await fetch('https://api-skc2yfnwua-uc.a.run.app/admin/migrate-calculations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Migration failed');
-      }
-
-      setMigrationStatus(`Klar! Migrerade ${data.migrated} av ${data.total} kalkyler.`);
-      if (data.errors?.length > 0) {
-        setMigrationStatus(prev => `${prev} Fel: ${data.errors.join(', ')}`);
-      }
-
-      // Reload dashboard to show updated data
-      const user = auth.currentUser;
-      if (user) {
-        await loadDashboardData(user);
-      }
-    } catch (error) {
-      console.error('Migration error:', error);
-      setErrorMessage((error as Error).message || 'Migration failed');
-      setMigrationStatus('');
     } finally {
       setActionLoading(false);
     }
@@ -985,21 +940,6 @@ export default function Dashboard() {
             </div>
           ) : (
             <div>
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-yellow-800 mb-2">
-                  <strong>Data migration:</strong> Migrera gamla kalkyler till hushåll så medlemmar kan se dem.
-                </p>
-                <button
-                  onClick={handleMigrateCalculations}
-                  disabled={actionLoading}
-                  className="bg-yellow-600 text-white px-3 py-1.5 rounded text-sm hover:bg-yellow-700 disabled:opacity-50"
-                >
-                  {actionLoading ? 'Migrerar...' : 'Migrera kalkyler'}
-                </button>
-                {migrationStatus && (
-                  <p className="text-xs text-yellow-700 mt-2">{migrationStatus}</p>
-                )}
-              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {households.map((household) => (
                   <button
