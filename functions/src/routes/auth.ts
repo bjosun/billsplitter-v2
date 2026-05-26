@@ -1,11 +1,42 @@
 import { Router } from 'express';
-import { auth } from '../config/firebase';
+import * as crypto from 'crypto';
+import { auth, db, admin } from '../config/firebase';
 
 const router = Router();
 
-// In-memory store for pending OAuth states (maps our state → Claude's original redirect_uri + state)
-// Fine for stateless Cloud Functions since the callback happens within seconds.
-const pendingStates = new Map<string, { claudeRedirectUri: string; claudeState: string; codeVerifier?: string }>();
+// Firestore-backed state store so all Cloud Function instances share it.
+const STATE_COLLECTION = 'oauth_states';
+
+async function saveState(
+  state: string,
+  data: { claudeRedirectUri: string; claudeState: string; codeChallenge?: string; codeChallengeMethod?: string }
+): Promise<void> {
+  const expiresAt = admin.firestore.Timestamp.fromMillis(Date.now() + 10 * 60 * 1000);
+  await db.collection(STATE_COLLECTION).doc(state).set({ ...data, expiresAt });
+}
+
+async function popState(
+  state: string
+): Promise<{ claudeRedirectUri: string; claudeState: string; codeChallenge?: string; codeChallengeMethod?: string } | null> {
+  const ref = db.collection(STATE_COLLECTION).doc(state);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data()!;
+  await ref.delete();
+  // Reject expired states
+  if (data.expiresAt && data.expiresAt.toMillis() < Date.now()) return null;
+  return data as any;
+}
+
+function verifyPkce(codeVerifier: string, codeChallenge: string, method: string): boolean {
+  if (method === 'S256') {
+    const digest = crypto.createHash('sha256').update(codeVerifier).digest();
+    const computed = digest.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    return computed === codeChallenge;
+  }
+  // plain method
+  return codeVerifier === codeChallenge;
+}
 
 const getSelfBaseUrl = (req: any): string => {
   const host = req.get('host');
@@ -17,7 +48,7 @@ const getSelfBaseUrl = (req: any): string => {
 // Claude Desktop calls this with its own redirect_uri (e.g. claude://...).
 // We proxy through Google using our own server-side callback URL so that
 // Google never sees the custom claude:// scheme it would reject.
-router.get('/authorize', (req, res) => {
+router.get('/authorize', async (req, res) => {
   const clientId = process.env.OAUTH_CLIENT_ID;
   const claudeRedirectUri = String(req.query.redirect_uri || '');
   const claudeState = String(req.query.state || '');
@@ -28,11 +59,16 @@ router.get('/authorize', (req, res) => {
     return res.status(400).json({ error: 'OAuth configuration missing' });
   }
 
-  // Generate a new state that maps back to Claude's original redirect_uri + state
-  const ourState = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
-  pendingStates.set(ourState, { claudeRedirectUri, claudeState });
-  // Clean up after 10 minutes
-  setTimeout(() => pendingStates.delete(ourState), 10 * 60 * 1000);
+  const codeChallenge = String(req.query.code_challenge || '');
+  const codeChallengeMethod = String(req.query.code_challenge_method || 'plain');
+
+  // Generate a new state that maps back to Claude's original redirect_uri + state (Firestore-backed)
+  const ourState = crypto.randomBytes(16).toString('hex');
+  await saveState(ourState, {
+    claudeRedirectUri,
+    claudeState,
+    ...(codeChallenge ? { codeChallenge, codeChallengeMethod } : {}),
+  });
 
   const selfBase = getSelfBaseUrl(req);
   const ourCallbackUri = `${selfBase}/auth/callback`;
@@ -57,11 +93,10 @@ router.get('/callback', async (req, res) => {
   const ourState = String(req.query.state || '');
   const error = String(req.query.error || '');
 
-  const pending = pendingStates.get(ourState);
+  const pending = await popState(ourState);
   if (!pending) {
     return res.status(400).send('Invalid or expired OAuth state');
   }
-  pendingStates.delete(ourState);
 
   const { claudeRedirectUri, claudeState } = pending;
 
@@ -110,8 +145,22 @@ router.get('/callback', async (req, res) => {
     // (our MCP middleware validates it via verifyIdToken / getTokenInfo)
     const accessToken = tokenJson.id_token || tokenJson.access_token;
 
+    // Store the token mapped to an opaque code so PKCE can be verified at /token
+    const opaqueCode = crypto.randomBytes(16).toString('hex');
+    await saveState(`code:${opaqueCode}`, {
+      claudeRedirectUri,
+      claudeState,
+      codeChallenge: pending.codeChallenge,
+      codeChallengeMethod: pending.codeChallengeMethod,
+    });
+    // Temporarily store the token under the opaque code key
+    await db.collection(STATE_COLLECTION).doc(`token:${opaqueCode}`).set({
+      accessToken,
+      expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 5 * 60 * 1000),
+    });
+
     const separator = claudeRedirectUri.includes('?') ? '&' : '?';
-    const callbackParams = new URLSearchParams({ code: accessToken });
+    const callbackParams = new URLSearchParams({ code: opaqueCode });
     if (claudeState) callbackParams.set('state', claudeState);
     return res.redirect(`${claudeRedirectUri}${separator}${callbackParams.toString()}`);
   } catch (err) {
@@ -137,51 +186,84 @@ router.post('/token', async (req, res) => {
       return res.status(500).json({ error: 'OAuth not configured' });
     }
 
-    // If the "code" looks like a JWT (id_token we passed back via /callback),
-    // return it directly as the access_token — no second exchange needed.
-    if (grant_type !== 'refresh_token' && code && String(code).split('.').length === 3) {
-      return res.json({
-        access_token: code,
-        token_type: 'Bearer',
-        expires_in: 3600,
-      });
-    }
-
-    const body = new URLSearchParams();
-    body.set('client_id', clientId);
-    if (clientSecret) {
-      body.set('client_secret', clientSecret);
-    }
-    body.set('grant_type', grant_type || 'authorization_code');
-
     if (grant_type === 'refresh_token') {
       if (!refresh_token) {
         return res.status(400).json({ error: 'refresh_token is required' });
       }
-      body.set('refresh_token', String(refresh_token));
-    } else {
-      if (!code || !redirect_uri) {
-        return res.status(400).json({ error: 'code and redirect_uri are required' });
+      const body = new URLSearchParams({
+        client_id: clientId,
+        grant_type: 'refresh_token',
+        refresh_token: String(refresh_token),
+      });
+      if (clientSecret) body.set('client_secret', clientSecret);
+      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      const tokenJson: any = await tokenResponse.json();
+      if (!tokenResponse.ok) return res.status(tokenResponse.status).json(tokenJson);
+      return res.json({ ...tokenJson, token_type: 'Bearer', scope: 'openid email profile' });
+    }
+
+    // Authorization code grant — look up the opaque code we stored at /callback
+    if (!code) {
+      return res.status(400).json({ error: 'code is required' });
+    }
+    const codeStr = String(code);
+
+    // Legacy path: code is already a raw JWT (old clients)
+    if (codeStr.split('.').length === 3) {
+      return res.json({
+        access_token: codeStr,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: 'openid email profile',
+      });
+    }
+
+    // New path: code is an opaque code, look up stored state + token
+    const [stateSnap, tokenSnap] = await Promise.all([
+      db.collection(STATE_COLLECTION).doc(`code:${codeStr}`).get(),
+      db.collection(STATE_COLLECTION).doc(`token:${codeStr}`).get(),
+    ]);
+
+    if (!stateSnap.exists || !tokenSnap.exists) {
+      return res.status(400).json({ error: 'invalid_grant', error_description: 'Unknown or expired code' });
+    }
+
+    const stateData = stateSnap.data()!;
+    const tokenData = tokenSnap.data()!;
+
+    // Clean up immediately
+    await Promise.all([
+      stateSnap.ref.delete(),
+      tokenSnap.ref.delete(),
+    ]);
+
+    // Verify expiry
+    if (tokenData.expiresAt?.toMillis() < Date.now()) {
+      return res.status(400).json({ error: 'invalid_grant', error_description: 'Code expired' });
+    }
+
+    // Verify PKCE if the original request included a code_challenge
+    const { code_verifier } = req.body as { code_verifier?: string };
+    if (stateData.codeChallenge) {
+      if (!code_verifier) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'code_verifier required' });
       }
-      body.set('code', String(code));
-      body.set('redirect_uri', String(redirect_uri));
+      const valid = verifyPkce(String(code_verifier), stateData.codeChallenge, stateData.codeChallengeMethod || 'S256');
+      if (!valid) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
+      }
     }
 
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: body.toString(),
+    return res.json({
+      access_token: tokenData.accessToken,
+      token_type: 'Bearer',
+      expires_in: 3600,
+      scope: 'openid email profile',
     });
-
-    const tokenJson = await tokenResponse.json();
-
-    if (!tokenResponse.ok) {
-      return res.status(tokenResponse.status).json(tokenJson);
-    }
-
-    res.json(tokenJson);
   } catch (error) {
     console.error('Token error:', error);
     res.status(500).json({ error: 'Token exchange failed' });
