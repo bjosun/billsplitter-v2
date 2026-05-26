@@ -6,7 +6,7 @@ import { ParsedIncome, ParsedBill } from '../utils/csvParser';
 import CSVUploader from '../components/CSVUploader';
 import { getFirestore, collection, addDoc, query, where, limit, getDocs } from 'firebase/firestore';
 import { auth } from '../firebase';
-import { getHouseholds } from '../services/api';
+import { getHouseholds, sendCalculationNotification } from '../services/api';
 import type { Household } from '../types';
 
 export default function Calculator() {
@@ -20,6 +20,7 @@ export default function Calculator() {
   const [households, setHouseholds] = useState<Household[]>([]);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string>('');
   const [saveConfirmation, setSaveConfirmation] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState<{ sent: string[]; skipped: string[] } | null>(null);
 
   // Load historical suggestions on mount
   useEffect(() => {
@@ -208,8 +209,15 @@ export default function Calculator() {
         calculation.householdId = selectedHouseholdId;
       }
 
-      await addDoc(collection(db, 'calculations'), calculation);
+      const docRef = await addDoc(collection(db, 'calculations'), calculation);
       setSaveConfirmation(true);
+      setNotificationStatus(null);
+      try {
+        const notifResult = await sendCalculationNotification(docRef.id);
+        setNotificationStatus(notifResult);
+      } catch (notifErr) {
+        console.warn('Could not send notification emails:', notifErr);
+      }
     } catch (error) {
       console.error('Error saving calculation:', error);
       alert('Failed to save calculation: ' + (error as any).message);
@@ -410,12 +418,25 @@ export default function Calculator() {
           <div className="flex justify-between items-center mb-4">
             <h3 className="font-semibold text-green-800 text-lg">Sparad! Betalningsöversikt</h3>
             <button
-              onClick={() => setSaveConfirmation(false)}
+              onClick={() => { setSaveConfirmation(false); setNotificationStatus(null); }}
               className="text-green-600 hover:text-green-900 text-xl font-bold leading-none"
             >
               ×
             </button>
           </div>
+
+          {notificationStatus === null ? (
+            <p className="text-xs text-green-600 mb-3">Skickar e-postsammanfattning…</p>
+          ) : notificationStatus.sent.length > 0 ? (
+            <p className="text-xs text-green-700 mb-3">
+              ✓ E-post skickad till: {notificationStatus.sent.join(', ')}
+              {notificationStatus.skipped.length > 0 && ` · Hoppade över: ${notificationStatus.skipped.join(', ')}`}
+            </p>
+          ) : (
+            <p className="text-xs text-amber-600 mb-3">
+              Ingen e-post skickad (ingen matchad e-postadress hittades för deltagarna).
+            </p>
+          )}
 
           <div className="space-y-3">
             {Object.entries(result.contributions).map(([name, amount]) => {

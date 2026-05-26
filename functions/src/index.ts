@@ -7,6 +7,7 @@ import expenseRoutes from './routes/expenses';
 import userRoutes from './routes/users';
 import mcpRoutes from './routes/mcp';
 import adminRoutes from './routes/admin';
+import notificationRoutes from './routes/notifications';
 import { errorHandler } from './middleware/error';
 
 const app = express();
@@ -50,6 +51,7 @@ app.use('/expenses', expenseRoutes);
 app.use('/users', userRoutes);
 app.use('/mcp', mcpRoutes);
 app.use('/admin', adminRoutes);
+app.use('/notifications', notificationRoutes);
 
 // Error handling
 app.use(errorHandler);

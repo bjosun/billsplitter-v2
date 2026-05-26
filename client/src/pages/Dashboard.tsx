@@ -15,6 +15,7 @@ import {
   joinHousehold,
   listInvites,
   revokeInvite,
+  sendCalculationNotification,
 } from '../services/api';
 import { calculateExpenditure } from '../utils/calculations';
 import type { Household, Invite } from '../types';
@@ -146,6 +147,7 @@ export default function Dashboard() {
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string>('');
   const [sankeyRange, setSankeyRange] = useState<SankeyRange>('month');
   const [sankeyMode, setSankeyMode] = useState<SankeyMode>('calendar');
+  const [resendStatus, setResendStatus] = useState<{ sent: string[]; skipped: string[] } | 'sending' | null>(null);
 
   const selectedHousehold = useMemo(
     () => households.find((household) => household.id === selectedHouseholdId) || households[0],
@@ -872,6 +874,36 @@ export default function Dashboard() {
                 </div>
               </div>
             )}
+
+            <div className="mt-4 pt-4 border-t flex items-center justify-between gap-4">
+              <div className="text-sm">
+                {resendStatus === 'sending' && (
+                  <span className="text-gray-500">Skickar e-post…</span>
+                )}
+                {resendStatus && resendStatus !== 'sending' && resendStatus.sent.length > 0 && (
+                  <span className="text-green-700">✓ Skickad till: {resendStatus.sent.join(', ')}</span>
+                )}
+                {resendStatus && resendStatus !== 'sending' && resendStatus.sent.length === 0 && (
+                  <span className="text-amber-600">Ingen e-post skickad – inga e-postadresser hittades.</span>
+                )}
+              </div>
+              <button
+                onClick={async () => {
+                  if (!latestCalculation?.id) return;
+                  setResendStatus('sending');
+                  try {
+                    const result = await sendCalculationNotification(latestCalculation.id);
+                    setResendStatus(result);
+                  } catch {
+                    setResendStatus({ sent: [], skipped: ['Fel vid skickning'] });
+                  }
+                }}
+                disabled={resendStatus === 'sending'}
+                className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 text-sm font-medium shrink-0"
+              >
+                Skicka sammanfattning via e-post
+              </button>
+            </div>
           </div>
         )}
 

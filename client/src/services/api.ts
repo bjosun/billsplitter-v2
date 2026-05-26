@@ -124,4 +124,13 @@ export async function revokeInvite(
   );
 }
 
+export async function sendCalculationNotification(
+  calcId: string
+): Promise<{ sent: string[]; skipped: string[] }> {
+  return apiRequest<{ sent: string[]; skipped: string[] }>('/notifications/calculation', {
+    method: 'POST',
+    body: JSON.stringify({ calcId }),
+  });
+}
+
 export { API_BASE_URL };
