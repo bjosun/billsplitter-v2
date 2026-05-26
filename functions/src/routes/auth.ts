@@ -23,8 +23,6 @@ router.get('/authorize', (req, res) => {
   const claudeState = String(req.query.state || '');
   const scope = String(req.query.scope || 'openid email profile');
   const responseType = String(req.query.response_type || 'code');
-  const codeChallenge = String(req.query.code_challenge || '');
-  const codeChallengeMethod = String(req.query.code_challenge_method || '');
 
   if (!clientId || !claudeRedirectUri) {
     return res.status(400).json({ error: 'OAuth configuration missing' });
@@ -48,11 +46,6 @@ router.get('/authorize', (req, res) => {
     prompt: 'consent',
     state: ourState,
   });
-
-  if (codeChallenge) {
-    params.set('code_challenge', codeChallenge);
-    params.set('code_challenge_method', codeChallengeMethod || 'S256');
-  }
 
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   res.redirect(authUrl);
