@@ -55,7 +55,13 @@ router.get('/authorize', async (req, res) => {
   const scope = String(req.query.scope || 'openid email profile');
   const responseType = String(req.query.response_type || 'code');
 
+  console.log('[oauth] /authorize query:', JSON.stringify(req.query));
+
   if (!clientId || !claudeRedirectUri) {
+    console.error('[oauth] /authorize: missing clientId or redirect_uri', {
+      hasClientId: !!clientId,
+      claudeRedirectUri,
+    });
     return res.status(400).json({ error: 'OAuth configuration missing' });
   }
 
@@ -92,6 +98,8 @@ router.get('/callback', async (req, res) => {
   const code = String(req.query.code || '');
   const ourState = String(req.query.state || '');
   const error = String(req.query.error || '');
+
+  console.log('[oauth] /callback query:', JSON.stringify(req.query));
 
   const pending = await popState(ourState);
   if (!pending) {
@@ -179,6 +187,8 @@ router.post('/token', async (req, res) => {
   try {
     const clientId = process.env.OAUTH_CLIENT_ID;
     const clientSecret = process.env.OAUTH_CLIENT_SECRET || '';
+
+    console.log('[oauth] /token body keys:', Object.keys(req.body || {}), 'grant_type:', req.body?.grant_type);
 
     const { grant_type, code, redirect_uri, refresh_token } = req.body;
 
@@ -277,22 +287,31 @@ router.post('/token', async (req, res) => {
 router.post('/register', (req, res) => {
   const clientId = process.env.OAUTH_CLIENT_ID;
   if (!clientId) {
+    console.error('[oauth] /register: OAUTH_CLIENT_ID not set');
     return res.status(500).json({ error: 'OAuth not configured' });
   }
 
   const body = req.body || {};
+  console.log('[oauth] /register request:', JSON.stringify(body));
+
   const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
 
-  res.status(201).json({
+  const response = {
     client_id: clientId,
     client_id_issued_at: Math.floor(Date.now() / 1000),
+    // client_secret_expires_at = 0 means "never expires" (RFC 7591)
+    client_secret_expires_at: 0,
     redirect_uris: redirectUris,
     grant_types: body.grant_types || ['authorization_code', 'refresh_token'],
     response_types: body.response_types || ['code'],
     token_endpoint_auth_method: body.token_endpoint_auth_method || 'none',
+    application_type: body.application_type || 'web',
     scope: body.scope || 'openid email profile',
     client_name: body.client_name,
-  });
+  };
+  console.log('[oauth] /register response:', JSON.stringify(response));
+
+  res.status(201).json(response);
 });
 
 router.post('/google', async (req, res) => {

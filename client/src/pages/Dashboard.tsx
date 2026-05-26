@@ -61,7 +61,11 @@ const applyBillGrouping = (
   Object.entries(totals).forEach(([name, value]) => {
     const match = settings.groups.find((g) =>
       g.label &&
-      g.patterns.some((p) => p.trim() && name.toLowerCase().includes(p.trim().toLowerCase()))
+      g.patterns.some((p) =>
+        p.split(',').map((s) => s.trim()).filter(Boolean).some((token) =>
+          name.toLowerCase().includes(token.toLowerCase())
+        )
+      )
     );
     if (match) {
       grouped[match.label] = (grouped[match.label] || 0) + value;

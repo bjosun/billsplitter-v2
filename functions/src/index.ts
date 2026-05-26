@@ -19,6 +19,14 @@ app.use(express.json());
 // Standard OAuth /token bodies are application/x-www-form-urlencoded.
 app.use(express.urlencoded({ extended: true }));
 
+// Temporary access log to debug Claude MCP connector flow.
+app.use((req, _res, next) => {
+  if (req.path.startsWith('/.well-known') || req.path.startsWith('/auth') || req.path === '/mcp') {
+    console.log(`[req] ${req.method} ${req.path} origin=${req.get('origin') || '-'} ua=${(req.get('user-agent') || '').slice(0, 60)}`);
+  }
+  next();
+});
+
 // OAuth discovery — MCP clients read these to auto-configure the OAuth flow.
 const issuer = () => {
   const host = process.env.FUNCTION_HOST || 'us-central1-billsplitter-v2.cloudfunctions.net';
