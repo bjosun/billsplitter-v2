@@ -5,6 +5,7 @@ import {
   API_BASE_URL,
   getMyProfile,
   updateMyProfile,
+  updateMemberProfile,
   getHouseholds,
   getHouseholdMembers,
   type UserProfile,
@@ -35,7 +36,82 @@ function ConfigRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MemberRow({ member, isMe }: { member: HouseholdMember; isMe: boolean }) {
+function MemberRow({
+  member,
+  isMe,
+  canEdit,
+  onSaved,
+}: {
+  member: HouseholdMember;
+  isMe: boolean;
+  canEdit: boolean;
+  onSaved: (updated: HouseholdMember) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(member.name);
+  const [editPhone, setEditPhone] = useState(member.phone);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await updateMemberProfile(member.uid, { name: editName, phone: editPhone });
+      onSaved({ ...member, name: updated.name, phone: updated.phone || '' });
+      setEditing(false);
+    } catch {
+      setError('Kunde inte spara');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div className="border border-indigo-200 bg-indigo-50 rounded-lg p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="w-9 h-9 rounded-full bg-indigo-200 text-indigo-800 flex items-center justify-center text-sm font-bold shrink-0">
+            {editName ? editName[0].toUpperCase() : '?'}
+          </div>
+          <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              type="text"
+              value={editName}
+              onChange={e => setEditName(e.target.value)}
+              placeholder="Namn"
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <input
+              type="tel"
+              value={editPhone}
+              onChange={e => setEditPhone(e.target.value)}
+              placeholder="Telefon"
+              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 justify-end">
+          {error && <span className="text-xs text-red-600">{error}</span>}
+          <button
+            onClick={() => setEditing(false)}
+            className="text-sm text-gray-500 hover:text-gray-700 px-3 py-1"
+          >
+            Avbryt
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1 bg-indigo-600 text-white text-sm px-3 py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Save className="h-3.5 w-3.5" />
+            {saving ? 'Sparar…' : 'Spara'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-lg border ${isMe ? 'border-indigo-200 bg-indigo-50' : 'border-gray-100 bg-gray-50'}`}>
       <div className="flex items-center gap-3">
@@ -50,19 +126,29 @@ function MemberRow({ member, isMe }: { member: HouseholdMember; isMe: boolean })
           <p className="text-xs text-gray-500 capitalize">{member.role}</p>
         </div>
       </div>
-      <div className="flex flex-col gap-0.5 text-xs text-gray-500 sm:text-right">
-        {member.email && (
-          <span className="flex items-center gap-1 sm:justify-end">
-            <Mail className="h-3 w-3" />{member.email}
-          </span>
-        )}
-        {member.phone && (
-          <span className="flex items-center gap-1 sm:justify-end">
-            <Phone className="h-3 w-3" />{member.phone}
-          </span>
-        )}
-        {!member.email && !member.phone && (
-          <span className="text-gray-400 italic">Ingen kontaktinfo</span>
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-0.5 text-xs text-gray-500 sm:text-right">
+          {member.email && (
+            <span className="flex items-center gap-1 sm:justify-end">
+              <Mail className="h-3 w-3" />{member.email}
+            </span>
+          )}
+          {member.phone && (
+            <span className="flex items-center gap-1 sm:justify-end">
+              <Phone className="h-3 w-3" />{member.phone}
+            </span>
+          )}
+          {!member.email && !member.phone && (
+            <span className="text-gray-400 italic">Ingen kontaktinfo</span>
+          )}
+        </div>
+        {canEdit && (
+          <button
+            onClick={() => setEditing(true)}
+            className="shrink-0 text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-2 py-1"
+          >
+            Redigera
+          </button>
         )}
       </div>
     </div>
@@ -83,6 +169,7 @@ export default function Settings() {
   const [membersByHousehold, setMembersByHousehold] = useState<Record<string, HouseholdMember[]>>({});
   const [expandedHousehold, setExpandedHousehold] = useState<string | null>(null);
   const [membersLoading, setMembersLoading] = useState<Record<string, boolean>>({});
+  const [adminHouseholds, setAdminHouseholds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     getMyProfile()
@@ -106,10 +193,17 @@ export default function Settings() {
     if (!expandedHousehold || membersByHousehold[expandedHousehold]) return;
     setMembersLoading(prev => ({ ...prev, [expandedHousehold]: true }));
     getHouseholdMembers(expandedHousehold)
-      .then(members => setMembersByHousehold(prev => ({ ...prev, [expandedHousehold]: members })))
+      .then(members => {
+        setMembersByHousehold(prev => ({ ...prev, [expandedHousehold]: members }));
+        // Detect if logged-in user is admin in this household
+        const me = members.find(m => m.email === profile?.email);
+        if (me?.role === 'admin') {
+          setAdminHouseholds(prev => new Set([...prev, expandedHousehold!]));
+        }
+      })
       .catch(console.error)
       .finally(() => setMembersLoading(prev => ({ ...prev, [expandedHousehold!]: false })));
-  }, [expandedHousehold, membersByHousehold]);
+  }, [expandedHousehold, membersByHousehold, profile?.email]);
 
   const handleSaveProfile = async () => {
     setSaving(true);
@@ -259,6 +353,11 @@ export default function Settings() {
                               key={member.uid}
                               member={member}
                               isMe={member.email === profile?.email}
+                              canEdit={adminHouseholds.has(household.id) && member.email !== profile?.email}
+                              onSaved={updated => setMembersByHousehold(prev => ({
+                                ...prev,
+                                [household.id]: prev[household.id].map(m => m.uid === updated.uid ? updated : m),
+                              }))}
                             />
                           ))
                         )}

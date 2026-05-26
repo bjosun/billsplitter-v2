@@ -154,6 +154,17 @@ export async function updateMyProfile(updates: { name?: string; phone?: string }
   return data.user;
 }
 
+export async function updateMemberProfile(
+  userId: string,
+  updates: { name?: string; phone?: string }
+): Promise<UserProfile> {
+  const data = await apiRequest<{ user: UserProfile }>(`/users/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+  return data.user;
+}
+
 export async function getHouseholdMembers(householdId: string): Promise<HouseholdMember[]> {
   const data = await apiRequest<{ members: HouseholdMember[] }>(
     `/households/${encodeURIComponent(householdId)}/members`

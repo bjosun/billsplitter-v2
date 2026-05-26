@@ -6,6 +6,40 @@ import { calculateExpenditure, Bill } from '../services/calculation.service';
 
 const router = Router();
 
+function normalizeName(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[åä]/g, 'a')
+    .replace(/ö/g, 'o')
+    .replace(/é/g, 'e')
+    .replace(/ü/g, 'u')
+    .trim();
+}
+
+function findEmail(
+  contributorName: string,
+  emailMap: Record<string, string>
+): string | undefined {
+  // 1. Exact match
+  if (emailMap[contributorName]) return emailMap[contributorName];
+
+  const normContrib = normalizeName(contributorName);
+  const firstContrib = normContrib.split(' ')[0];
+
+  for (const [mapName, email] of Object.entries(emailMap)) {
+    const normMap = normalizeName(mapName);
+    // 2. Case+diacritic insensitive full name
+    if (normMap === normContrib) return email;
+    // 3. Contributor first name matches map full name ("Björn" vs "Bjorn")
+    if (normMap === firstContrib) return email;
+    // 4. Contributor first name matches map first name ("Björn" vs "Bjorn Sundberg")
+    const firstMap = normMap.split(' ')[0];
+    if (firstMap === firstContrib) return email;
+  }
+
+  return undefined;
+}
+
 const kr = (n: number) =>
   `kr ${n.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -327,7 +361,7 @@ router.post('/calculation', authenticateUser, async (req: AuthRequest, res) => {
     const skipped: string[] = [];
 
     for (const contributor of contributors) {
-      const email = emailMap[contributor.name];
+      const email = findEmail(contributor.name, emailMap);
       if (!email) {
         skipped.push(contributor.name);
         continue;
