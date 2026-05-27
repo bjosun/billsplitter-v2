@@ -576,8 +576,16 @@ const toolHandlers: Record<string, any> = {
     const snapshot = await db.collection('households').get();
     return snapshot.docs
       .filter((doc: any) => {
-        const members = doc.data().members || [];
-        return members.some((m: any) => m.uid === req.user!.uid);
+        const members = doc.data().members;
+        // Handle both array and object formats
+        if (Array.isArray(members)) {
+          return members.some((m: any) => m.uid === req.user!.uid);
+        } else if (members && typeof members === 'object') {
+          // If members is an object with UIDs as keys
+          return Object.keys(members).includes(req.user!.uid) ||
+                 Object.values(members).some((m: any) => m?.uid === req.user!.uid);
+        }
+        return false;
       })
       .map((doc: any) => ({ id: doc.id, ...doc.data() }));
   },
