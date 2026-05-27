@@ -573,21 +573,34 @@ const toolHandlers: Record<string, any> = {
   },
 
   list_households: async (req: AuthRequest) => {
+    const uid = req.user!.uid;
+    console.log('[list_households] Looking for user:', uid);
     const snapshot = await db.collection('households').get();
-    return snapshot.docs
-      .filter((doc: any) => {
-        const members = doc.data().members;
-        // Handle both array and object formats
-        if (Array.isArray(members)) {
-          return members.some((m: any) => m.uid === req.user!.uid);
-        } else if (members && typeof members === 'object') {
-          // If members is an object with UIDs as keys
-          return Object.keys(members).includes(req.user!.uid) ||
-                 Object.values(members).some((m: any) => m?.uid === req.user!.uid);
-        }
-        return false;
-      })
-      .map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    console.log('[list_households] Total households:', snapshot.docs.length);
+
+    const filtered = snapshot.docs.filter((doc: any) => {
+      const data = doc.data();
+      const members = data.members;
+      console.log(`[list_households] Household "${data.name}": members type=${typeof members}, isArray=${Array.isArray(members)}, members=`, members);
+
+      // Handle both array and object formats
+      if (Array.isArray(members)) {
+        const found = members.some((m: any) => m.uid === uid);
+        console.log(`[list_households] Array check: found=${found}`);
+        return found;
+      } else if (members && typeof members === 'object') {
+        // If members is an object with UIDs as keys
+        const found = Object.keys(members).includes(uid) ||
+                      Object.values(members).some((m: any) => m?.uid === uid);
+        console.log(`[list_households] Object check: found=${found}`);
+        return found;
+      }
+      console.log('[list_households] No members data');
+      return false;
+    });
+
+    console.log('[list_households] Filtered households:', filtered.length);
+    return filtered.map((doc: any) => ({ id: doc.id, ...doc.data() }));
   },
 
   list_contributors: async (req: AuthRequest, params: any) => {

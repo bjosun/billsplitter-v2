@@ -17,10 +17,7 @@ import {
 } from '../services/api';
 import type { Household } from '../types';
 
-const AUTH_URL = `${API_BASE_URL}/auth/authorize`;
-const TOKEN_URL = `${API_BASE_URL}/auth/token`;
 const MCP_URL = `${API_BASE_URL}/mcp`;
-const CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID || '';
 
 function ConfigRow({ label, value }: { label: string; value: string }) {
   return (
@@ -584,18 +581,9 @@ export default function Settings() {
           <div className="bg-white rounded-xl shadow-md p-6">
             <h2 className="text-xl font-semibold mb-4 flex items-center">
               <Key className="h-6 w-6 mr-2 text-indigo-600" />
-              MCP OAuth-konfiguration
+              MCP-konfiguration
             </h2>
-            <p className="text-gray-600 mb-4 text-sm">
-              Använd dessa värden i Claude Desktop/Claude Code MCP-inställningar för OAuth.
-            </p>
-            <div className="space-y-3">
-              <ConfigRow label="Authorization URL" value={AUTH_URL} />
-              <ConfigRow label="Token URL" value={TOKEN_URL} />
-              <ConfigRow label="MCP URL" value={MCP_URL} />
-              <ConfigRow label="Client ID" value={CLIENT_ID || '(not configured)'} />
-            </div>
-            <ConfigRow label="API Base URL" value={API_BASE_URL} />
+            <ConfigRow label="MCP URL" value={MCP_URL} />
           </div>
         )}
 
