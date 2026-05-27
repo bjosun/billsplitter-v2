@@ -331,7 +331,7 @@ async function assertHouseholdMember(uid: string, householdId: string) {
   if (!isMember(data?.members, uid)) {
     throw new Error('Not a member of this household');
   }
-  return { id: doc.id, ...data };
+  return { ...data, id: doc.id };
 }
 
 // Tool handlers
@@ -630,6 +630,27 @@ const toolHandlers: Record<string, any> = {
   list_contributors: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
     await assertHouseholdMember(req.user!.uid, householdId);
+
+    // Web-appen sparar contributors inuti calculation-dokument. Hämta från senaste calc.
+    // Fallback: även gamla top-level contributors-collection.
+    const calcSnap = await db.collection('calculations')
+      .where('householdId', '==', householdId)
+      .get();
+
+    if (!calcSnap.empty) {
+      // Hitta nyaste calculation (createdAt kan vara Timestamp eller string)
+      const sorted = calcSnap.docs.sort((a: any, b: any) => {
+        const aTs = a.data().createdAt?._seconds || a.data().createdAt?.seconds || 0;
+        const bTs = b.data().createdAt?._seconds || b.data().createdAt?.seconds || 0;
+        return bTs - aTs;
+      });
+      const latest = sorted[0].data();
+      if (Array.isArray(latest.contributors) && latest.contributors.length > 0) {
+        return latest.contributors;
+      }
+    }
+
+    // Fallback till legacy top-level collection
     const snapshot = await db.collection('contributors')
       .where('householdId', '==', householdId)
       .get();
@@ -639,6 +660,25 @@ const toolHandlers: Record<string, any> = {
   list_bills: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
     await assertHouseholdMember(req.user!.uid, householdId);
+
+    // Web-appen sparar bills inuti calculation-dokument. Hämta från senaste calc.
+    const calcSnap = await db.collection('calculations')
+      .where('householdId', '==', householdId)
+      .get();
+
+    if (!calcSnap.empty) {
+      const sorted = calcSnap.docs.sort((a: any, b: any) => {
+        const aTs = a.data().createdAt?._seconds || a.data().createdAt?.seconds || 0;
+        const bTs = b.data().createdAt?._seconds || b.data().createdAt?.seconds || 0;
+        return bTs - aTs;
+      });
+      const latest = sorted[0].data();
+      if (Array.isArray(latest.bills) && latest.bills.length > 0) {
+        return latest.bills;
+      }
+    }
+
+    // Fallback till legacy top-level collection
     const snapshot = await db.collection('bills')
       .where('householdId', '==', householdId)
       .get();
