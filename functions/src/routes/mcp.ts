@@ -620,7 +620,7 @@ const toolHandlers: Record<string, any> = {
       });
 
       console.log('[list_households] Filtered result count:', filtered.length);
-      return filtered.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+      return filtered.map((doc: any) => ({ ...doc.data(), id: doc.id }));
     } catch (error) {
       console.error('[list_households] Error:', error);
       throw error;
@@ -633,7 +633,7 @@ const toolHandlers: Record<string, any> = {
     const snapshot = await db.collection('contributors')
       .where('householdId', '==', householdId)
       .get();
-    return snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id }));
   },
 
   list_bills: async (req: AuthRequest, params: any) => {
@@ -642,7 +642,7 @@ const toolHandlers: Record<string, any> = {
     const snapshot = await db.collection('bills')
       .where('householdId', '==', householdId)
       .get();
-    return snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id }));
   },
 
   update_contributor: async (req: AuthRequest, params: any) => {
@@ -739,7 +739,7 @@ const toolHandlers: Record<string, any> = {
 
     // createdAt is stored as ISO string by MCP; filter by month prefix in code.
     const monthCalcs = snapshot.docs
-      .map((doc: any) => ({ id: doc.id, ...doc.data() }))
+      .map((doc: any) => ({ ...doc.data(), id: doc.id }))
       .filter((c: any) => typeof c.createdAt === 'string' && c.createdAt.startsWith(month));
 
     let totalSharedBills = 0;
@@ -846,21 +846,21 @@ const toolHandlers: Record<string, any> = {
 const resourceHandlers: Record<string, any> = {
   households: async (req: AuthRequest) => {
     const querySnapshot = await db.collection('households').where('members', 'array-contains', req.user!.uid).get();
-    return querySnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    return querySnapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id }));
   },
 
   contributors: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
     await assertHouseholdMember(req.user!.uid, householdId);
     const querySnapshot = await db.collection('contributors').where('householdId', '==', householdId).get();
-    return querySnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    return querySnapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id }));
   },
 
   bills: async (req: AuthRequest, params: any) => {
     const { householdId } = params;
     await assertHouseholdMember(req.user!.uid, householdId);
     const querySnapshot = await db.collection('bills').where('householdId', '==', householdId).get();
-    return querySnapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    return querySnapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id }));
   },
 
   history: async (req: AuthRequest, params: any) => {
@@ -868,7 +868,7 @@ const resourceHandlers: Record<string, any> = {
     await assertHouseholdMember(req.user!.uid, householdId);
 
     const mapAndSort = (snapshot: any) => {
-      const history = snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+      const history = snapshot.docs.map((doc: any) => ({ ...doc.data(), id: doc.id }));
       history.sort((a: any, b: any) => {
         const aTime = new Date(a.createdAt || 0).getTime();
         const bTime = new Date(b.createdAt || 0).getTime();
