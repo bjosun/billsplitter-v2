@@ -46,12 +46,24 @@ jobs:
         env:
           GCP_CREDENTIALS_B64: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
 
-      - name: Deploy to Firebase
-        run: npx firebase deploy --project billsplitter-v2 --non-interactive
+      - name: Create functions .env.yaml from secrets
+        run: |
+          cat > functions/.env.yaml << EOF
+          RESEND_API_KEY: $RESEND_API_KEY
+          RESEND_FROM_EMAIL: $RESEND_FROM_EMAIL
+          APP_BASE_URL: $APP_BASE_URL
+          OAUTH_CLIENT_ID: $OAUTH_CLIENT_ID
+          OAUTH_CLIENT_SECRET: $OAUTH_CLIENT_SECRET
+          FUNCTION_HOST: us-central1-billsplitter-v2.cloudfunctions.net
+          EOF
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: /home/runner/gcp-key.json
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
           APP_BASE_URL: ${{ secrets.APP_BASE_URL }}
           OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
           OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+
+      - name: Deploy to Firebase
+        run: npx firebase deploy --project billsplitter-v2 --non-interactive --env-vars-file=functions/.env.yaml
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /home/runner/gcp-key.json
