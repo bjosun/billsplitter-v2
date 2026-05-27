@@ -126,7 +126,7 @@ const tools = [
   },
   {
     name: 'calculate_split',
-    description: 'Calculate bill split for household',
+    description: 'Calculate bill split for household. If contributors/bills not provided, fetches from latest calculation.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -140,7 +140,7 @@ const tools = [
               income: { type: 'number' },
             },
           },
-          description: 'List of contributors with incomes',
+          description: 'List of contributors with incomes (optional - fetches from latest calculation if omitted)',
         },
         bills: {
           type: 'array',
@@ -153,10 +153,10 @@ const tools = [
               payer: { type: 'string' },
             },
           },
-          description: 'List of bills',
+          description: 'List of bills (optional - fetches from latest calculation if omitted)',
         },
       },
-      required: ['householdId', 'contributors', 'bills'],
+      required: ['householdId'],
     },
   },
   {
@@ -561,8 +561,35 @@ const toolHandlers: Record<string, any> = {
   },
 
   calculate_split: async (req: AuthRequest, params: any) => {
-    const { householdId, contributors, bills } = params;
+    const { householdId, contributors: providedContributors, bills: providedBills } = params;
     await assertHouseholdMember(req.user!.uid, householdId);
+
+    let contributors = providedContributors;
+    let bills = providedBills;
+
+    // If contributors/bills not provided, fetch from latest calculation
+    if (!contributors || contributors.length === 0 || !bills || bills.length === 0) {
+      console.log('[calculate_split] Fetching contributors/bills from latest calculation');
+      const calcSnap = await db.collection('calculations')
+        .where('householdId', '==', householdId)
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get();
+
+      if (!calcSnap.empty) {
+        const latestCalc = calcSnap.docs[0].data();
+        contributors = contributors && contributors.length > 0 ? contributors : latestCalc.contributors;
+        bills = bills && bills.length > 0 ? bills : latestCalc.bills;
+        console.log(`[calculate_split] Fetched: ${contributors?.length || 0} contributors, ${bills?.length || 0} bills`);
+      }
+    }
+
+    if (!contributors || contributors.length === 0) {
+      throw new Error('No contributors found. Provide contributors or create a calculation first.');
+    }
+    if (!bills || bills.length === 0) {
+      throw new Error('No bills found. Provide bills or create a calculation first.');
+    }
 
     // Filter shared bills
     const sharedBills = bills.filter((b: any) => b.shared);
