@@ -297,6 +297,29 @@ const resources = [
   },
 ];
 
+// Check if a user is a member of household data. Handles multiple member formats:
+// - Array of strings (UIDs): ["uid1", "uid2"]
+// - Array of objects: [{uid: "uid1", ...}, {uid: "uid2", ...}]
+// - Object with UIDs as keys: {"uid1": {...}, "uid2": {...}}
+function isMember(members: any, uid: string): boolean {
+  if (!members) return false;
+
+  if (Array.isArray(members)) {
+    return members.some((m: any) => {
+      if (typeof m === 'string') return m === uid;
+      if (m && typeof m === 'object') return m.uid === uid;
+      return false;
+    });
+  }
+
+  if (typeof members === 'object') {
+    if (Object.keys(members).includes(uid)) return true;
+    return Object.values(members).some((m: any) => m?.uid === uid);
+  }
+
+  return false;
+}
+
 // Verify the authenticated user is a member of the given household.
 // Pre-existing tools (add_bill, calculate_split, etc.) do not check this; new tools must.
 async function assertHouseholdMember(uid: string, householdId: string) {
@@ -305,8 +328,7 @@ async function assertHouseholdMember(uid: string, householdId: string) {
     throw new Error('Household not found');
   }
   const data = doc.data() as any;
-  const members: string[] = data?.members || [];
-  if (!members.includes(uid)) {
+  if (!isMember(data?.members, uid)) {
     throw new Error('Not a member of this household');
   }
   return { id: doc.id, ...data };
@@ -456,9 +478,14 @@ const toolHandlers: Record<string, any> = {
     const householdDoc = querySnapshot.docs[0];
     const householdData = householdDoc.data();
     
-    if (!householdData.members.includes(req.user!.uid)) {
+    if (!isMember(householdData.members, req.user!.uid)) {
+      // Preserve the existing member format (array of strings or array of objects)
+      const existingMembers = householdData.members || [];
+      const newMember = Array.isArray(existingMembers) && existingMembers.length > 0 && typeof existingMembers[0] === 'object'
+        ? { uid: req.user!.uid, email: req.user!.email, name: req.user!.name, role: 'member', joinedAt: admin.firestore.FieldValue.serverTimestamp() }
+        : req.user!.uid;
       await db.collection('households').doc(householdDoc.id).update({
-        members: [...householdData.members, req.user!.uid],
+        members: [...existingMembers, newMember],
       });
     }
     
@@ -573,34 +600,31 @@ const toolHandlers: Record<string, any> = {
   },
 
   list_households: async (req: AuthRequest) => {
-    const uid = req.user!.uid;
-    console.log('[list_households] Looking for user:', uid);
-    const snapshot = await db.collection('households').get();
-    console.log('[list_households] Total households:', snapshot.docs.length);
-
-    const filtered = snapshot.docs.filter((doc: any) => {
-      const data = doc.data();
-      const members = data.members;
-      console.log(`[list_households] Household "${data.name}": members type=${typeof members}, isArray=${Array.isArray(members)}, members=`, members);
-
-      // Handle both array and object formats
-      if (Array.isArray(members)) {
-        const found = members.some((m: any) => m.uid === uid);
-        console.log(`[list_households] Array check: found=${found}`);
-        return found;
-      } else if (members && typeof members === 'object') {
-        // If members is an object with UIDs as keys
-        const found = Object.keys(members).includes(uid) ||
-                      Object.values(members).some((m: any) => m?.uid === uid);
-        console.log(`[list_households] Object check: found=${found}`);
-        return found;
+    try {
+      if (!req.user) {
+        console.error('[list_households] No user in request');
+        return [];
       }
-      console.log('[list_households] No members data');
-      return false;
-    });
 
-    console.log('[list_households] Filtered households:', filtered.length);
-    return filtered.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+      const uid = req.user.uid;
+      console.log('[list_households] User UID:', uid, 'email:', req.user.email);
+
+      const snapshot = await db.collection('households').get();
+      console.log('[list_households] Total households in DB:', snapshot.docs.length);
+
+      const filtered = snapshot.docs.filter((doc: any) => {
+        const data = doc.data();
+        const found = isMember(data.members, uid);
+        console.log(`[list_households] "${data.name}": found=${found}, members=`, JSON.stringify(data.members));
+        return found;
+      });
+
+      console.log('[list_households] Filtered result count:', filtered.length);
+      return filtered.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+      console.error('[list_households] Error:', error);
+      throw error;
+    }
   },
 
   list_contributors: async (req: AuthRequest, params: any) => {
