@@ -573,10 +573,13 @@ const toolHandlers: Record<string, any> = {
   },
 
   list_households: async (req: AuthRequest) => {
-    const snapshot = await db.collection('households')
-      .where('members', 'array-contains', req.user!.uid)
-      .get();
-    return snapshot.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
+    const snapshot = await db.collection('households').get();
+    return snapshot.docs
+      .filter((doc: any) => {
+        const members = doc.data().members || [];
+        return members.some((m: any) => m.uid === req.user!.uid);
+      })
+      .map((doc: any) => ({ id: doc.id, ...doc.data() }));
   },
 
   list_contributors: async (req: AuthRequest, params: any) => {
