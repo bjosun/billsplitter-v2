@@ -10,6 +10,21 @@ export interface AuthRequest extends Request {
   };
 }
 
+// Map Google OAuth user (identified by email) to the Firebase Auth UID
+// so MCP tools see the same UID that the web app stores in Firestore.
+// The Google OAuth `sub` is a numeric ID; Firebase Auth UID is alphanumeric.
+async function resolveFirebaseUid(email: string, googleSub: string): Promise<string> {
+  if (!email) return googleSub;
+  try {
+    const userRecord = await auth.getUserByEmail(email);
+    return userRecord.uid;
+  } catch (err) {
+    // User doesn't exist in Firebase Auth yet — fall back to Google sub
+    console.warn(`[auth] No Firebase user for email ${email}, using Google sub`);
+    return googleSub;
+  }
+}
+
 // MCP clients use the WWW-Authenticate header to discover the OAuth resource metadata.
 const sendUnauthorized = (res: Response, error: string, description?: string) => {
   const host = res.req?.get('host');
@@ -63,11 +78,17 @@ export const authenticateOAuth = async (
         return sendUnauthorized(res, 'invalid_token', 'Invalid token');
       }
 
+      const email = payload.email || '';
+      const googleSub = payload.sub || email;
+      const firebaseUid = await resolveFirebaseUid(email, googleSub);
+
       req.user = {
-        uid: payload.sub || payload.email || '',
-        email: payload.email || '',
+        uid: firebaseUid,
+        email,
         name: payload.name,
       };
+
+      console.log(`[auth] OAuth user resolved: email=${email}, googleSub=${googleSub}, firebaseUid=${firebaseUid}`);
 
       return next();
     } catch {
@@ -78,11 +99,17 @@ export const authenticateOAuth = async (
         return sendUnauthorized(res, 'invalid_token', 'Invalid token audience');
       }
 
+      const email = (tokenInfo as any).email || '';
+      const googleSub = (tokenInfo as any).sub || (tokenInfo as any).user_id || email;
+      const firebaseUid = await resolveFirebaseUid(email, googleSub);
+
       req.user = {
-        uid: (tokenInfo as any).sub || (tokenInfo as any).user_id || (tokenInfo as any).email || '',
-        email: (tokenInfo as any).email || '',
+        uid: firebaseUid,
+        email,
         name: undefined,
       };
+
+      console.log(`[auth] OAuth user resolved (tokenInfo): email=${email}, googleSub=${googleSub}, firebaseUid=${firebaseUid}`);
 
       return next();
     }
