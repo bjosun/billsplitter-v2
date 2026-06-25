@@ -155,6 +155,10 @@ const tools = [
           },
           description: 'List of bills (optional - fetches from latest calculation if omitted)',
         },
+        primaryPayer: {
+          type: 'string',
+          description: 'Optional: name of the person who fronts all shared bills. If set, everyone else transfers their full share to this person. If omitted, no inter-person transfers are produced (each pays their own share).',
+        },
       },
       required: ['householdId'],
     },
@@ -561,7 +565,7 @@ const toolHandlers: Record<string, any> = {
   },
 
   calculate_split: async (req: AuthRequest, params: any) => {
-    const { householdId, contributors: providedContributors, bills: providedBills } = params;
+    const { householdId, contributors: providedContributors, bills: providedBills, primaryPayer } = params;
     await assertHouseholdMember(req.user!.uid, householdId);
 
     let contributors = providedContributors;
@@ -601,7 +605,7 @@ const toolHandlers: Record<string, any> = {
     });
 
     // Calculate
-    const expenditure = calculateExpenditure(incomes, sharedBills);
+    const expenditure = calculateExpenditure(incomes, sharedBills, primaryPayer);
 
     // Attach pending status to every transfer so mark_transfer_paid can flip it later.
     const expenditureWithStatus = {
@@ -610,7 +614,7 @@ const toolHandlers: Record<string, any> = {
     };
 
     // Save to history
-    const calculation = {
+    const calculation: Record<string, any> = {
       userId: req.user!.uid,
       householdId,
       contributors,
@@ -618,6 +622,9 @@ const toolHandlers: Record<string, any> = {
       result: expenditureWithStatus,
       createdAt: new Date().toISOString(),
     };
+    if (primaryPayer) {
+      calculation.primaryPayer = primaryPayer;
+    }
     const docRef = await db.collection('calculations').add(calculation);
 
     return {

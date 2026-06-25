@@ -19,6 +19,7 @@ export default function Calculator() {
   const [historicalSuggestions, setHistoricalSuggestions] = useState<Record<string, { isShared: boolean; payer?: string }>>({});
   const [households, setHouseholds] = useState<Household[]>([]);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string>('');
+  const [primaryPayer, setPrimaryPayer] = useState<string>('');
   const [saveConfirmation, setSaveConfirmation] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<{ sent: string[]; skipped: string[] } | null>(null);
 
@@ -139,8 +140,18 @@ export default function Calculator() {
   const updateBill = (index: number, field: keyof ParsedBill, value: any) => {
     const updated = [...bills];
     updated[index] = { ...updated[index], [field]: value };
+    // Toggling shared/individual changes the meaning of payer, so clear any
+    // stale value to avoid an invisible payer silently affecting the settlement.
+    if (field === 'isShared') {
+      updated[index].payer = undefined;
+    }
     setBills(updated);
   };
+
+  // Only individual bills carry a payer (whose personal bill it is). Shared bills
+  // are split by income; who fronts them is controlled by the single primaryPayer.
+  const billPayer = (bill: ParsedBill): string | undefined =>
+    bill.isShared ? undefined : (bill.payer || undefined);
 
   const removeBill = (index: number) => {
     setBills(bills.filter((_, i) => i !== index));
@@ -165,10 +176,10 @@ export default function Calculator() {
       name: b.name,
       amount: b.amount,
       isShared: b.isShared,
-      payer: b.payer,
+      payer: billPayer(b),
     }));
 
-    const calculation = calculateExpenditure(incomes, billObjects);
+    const calculation = calculateExpenditure(incomes, billObjects, primaryPayer || undefined);
     setResult(calculation);
   };
 
@@ -191,8 +202,9 @@ export default function Calculator() {
           amount: b.amount,
           isShared: b.isShared,
         };
-        if (b.payer) {
-          bill.payer = b.payer;
+        const payer = billPayer(b);
+        if (payer) {
+          bill.payer = payer;
         }
         return bill;
       });
@@ -207,6 +219,9 @@ export default function Calculator() {
 
       if (selectedHouseholdId) {
         calculation.householdId = selectedHouseholdId;
+      }
+      if (primaryPayer) {
+        calculation.primaryPayer = primaryPayer;
       }
 
       const docRef = await addDoc(collection(db, 'calculations'), calculation);
@@ -371,6 +386,26 @@ export default function Calculator() {
               <span className="font-semibold">Total gemensamma räkningar:</span>
               <span className="text-xl font-bold text-indigo-600">kr {getTotalBills().toLocaleString()}</span>
             </div>
+          </div>
+
+          <div className="mt-4 pt-4 border-t">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Vem förskotterar de gemensamma räkningarna?
+            </label>
+            <select
+              value={primaryPayer}
+              onChange={(e) => setPrimaryPayer(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            >
+              <option value="">Ingen / var och en betalar sin andel direkt</option>
+              {contributors.map((c, i) => (
+                c.name && <option key={i} value={c.name}>{c.name}</option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-gray-500">
+              Väljer du en person antas hen ha betalat alla gemensamma räkningar – övriga för då över hela sin andel dit.
+              Väljer du "Ingen" betalar var och en sin andel direkt och inga överföringar visas.
+            </p>
           </div>
         </div>
 
@@ -560,6 +595,11 @@ export default function Calculator() {
             {result.transfers.length > 0 && (
               <div className="mt-5 pt-4 border-t">
                 <h3 className="font-semibold mb-2 text-gray-800">Överföringar som behövs</h3>
+                <p className="text-xs text-gray-500 mb-2">
+                  Visas eftersom {primaryPayer || 'en huvudbetalare'} betalar alla gemensamma räkningar.
+                  Var och en för då över hela sin andel dit. Vill du istället att alla betalar sin andel direkt,
+                  välj "Ingen" som huvudbetalare ovan.
+                </p>
                 <div className="space-y-2">
                   {result.transfers.map((transfer: any, index: number) => (
                     <div key={index} className="flex justify-between bg-indigo-50 rounded-lg px-3 py-2 text-sm">

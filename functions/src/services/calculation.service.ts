@@ -28,7 +28,8 @@ export interface CalculationResult {
 
 export function calculateExpenditure(
   incomes: Record<string, number>,
-  bills: Bill[]
+  bills: Bill[],
+  primaryPayer?: string
 ): CalculationResult {
   // Separate shared and individual bills
   const sharedBills = bills.filter(b => b.isShared);
@@ -52,14 +53,6 @@ export function calculateExpenditure(
     }
   });
 
-  // Track shared bills pre-paid by a specific person (for transfer settlement)
-  const sharedPaidByPerson: Record<string, number> = {};
-  sharedBills.forEach(bill => {
-    if (bill.payer) {
-      sharedPaidByPerson[bill.payer] = (sharedPaidByPerson[bill.payer] || 0) + bill.amount;
-    }
-  });
-
   const totalIncome = Object.values(incomes).reduce((a, b) => a + b, 0);
 
   // Individual bills are personal expenses — only shared bills factor into the split
@@ -76,7 +69,7 @@ export function calculateExpenditure(
     remainingAmounts[name] = targetRemainingBalance;
   }
 
-  const transfers = calculateTransfers(contributions, sharedPaidByPerson);
+  const transfers = calculateTransfers(contributions, primaryPayer);
 
   return {
     contributions,
@@ -86,38 +79,24 @@ export function calculateExpenditure(
     individualBills: individualBillsByPerson,
   };
 }
+
+// Settlement model: everyone pays their income-proportional share of the shared
+// bills. If a single primary payer fronts all shared bills, everyone else simply
+// transfers their full share to that person. With no primary payer there are no
+// inter-person transfers — each person pays their own share directly.
 export function calculateTransfers(
   contributions: Record<string, number>,
-  sharedBillsPaidByPerson: Record<string, number> = {}
+  primaryPayer?: string
 ): Transfer[] {
-  const transfers: Transfer[] = [];
-
-  // net = already paid towards shared - what they owe
-  // positive net → overpaid → should receive money from others
-  // negative net → underpaid → needs to send money to others
-  const receivers: Array<{ name: string; amount: number }> = [];
-  const senders: Array<{ name: string; amount: number }> = [];
-
-  for (const [name, contribution] of Object.entries(contributions)) {
-    const alreadyPaid = sharedBillsPaidByPerson[name] || 0;
-    const net = alreadyPaid - contribution;
-
-    if (net > 0.005) {
-      receivers.push({ name, amount: net });
-    } else if (net < -0.005) {
-      senders.push({ name, amount: -net });
-    }
+  if (!primaryPayer || !(primaryPayer in contributions)) {
+    return [];
   }
 
-  for (const sender of senders) {
-    let remaining = sender.amount;
-    for (const receiver of receivers) {
-      if (remaining <= 0.005) break;
-      if (receiver.amount <= 0.005) continue;
-      const amount = Math.min(remaining, receiver.amount);
-      transfers.push({ from: sender.name, to: receiver.name, amount });
-      remaining -= amount;
-      receiver.amount -= amount;
+  const transfers: Transfer[] = [];
+  for (const [name, contribution] of Object.entries(contributions)) {
+    if (name === primaryPayer) continue;
+    if (contribution > 0.005) {
+      transfers.push({ from: name, to: primaryPayer, amount: contribution });
     }
   }
 

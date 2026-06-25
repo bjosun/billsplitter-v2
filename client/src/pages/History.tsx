@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
+import { getFirestore, collection, query, where, getDocs, orderBy, doc, getDoc, deleteDoc } from 'firebase/firestore';
 import { auth } from '../firebase';
 import { calculateExpenditure } from '../utils/calculations';
 
@@ -37,6 +37,7 @@ interface Calculation {
   householdId?: string;
   contributors: Contributor[];
   bills: Bill[];
+  primaryPayer?: string;
   result?: CalculationResult;
   createdAt?: unknown;
 }
@@ -78,7 +79,7 @@ const getCalculationInsights = (calc: Calculation) => {
   }));
 
   const freshResult = Object.keys(incomes).length > 0
-    ? calculateExpenditure(incomes, billObjects)
+    ? calculateExpenditure(incomes, billObjects, calc.primaryPayer)
     : null;
 
   const contributions = freshResult?.contributions ?? calc.result?.contributions ?? {};
@@ -251,6 +252,19 @@ export default function History() {
     return () => unsubscribe();
   }, []);
 
+  const handleDelete = async (calcId: string) => {
+    if (!window.confirm('Ta bort den här beräkningen permanent?')) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(getFirestore(), 'calculations', calcId));
+      setCalculations((prev) => prev.filter((c) => c.id !== calcId));
+    } catch (error) {
+      console.error('Error deleting calculation:', error);
+      alert('Kunde inte ta bort beräkningen: ' + (error as Error).message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -340,6 +354,13 @@ export default function History() {
                               {billsCount} bills · {insights.transferCount} transfers
                             </p>
                           </div>
+                          <button
+                            onClick={() => handleDelete(calc.id)}
+                            className="flex items-center gap-1 self-start rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Ta bort
+                          </button>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                             <div className="rounded-lg bg-indigo-50 px-3 py-2">
                               <p className="text-[11px] uppercase tracking-wide text-indigo-700">Total</p>

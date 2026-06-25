@@ -28,6 +28,7 @@ interface Calculation {
   householdId?: string;
   contributors?: Array<{ name: string; income?: number }>;
   bills?: Array<{ name?: string; amount?: number; isShared?: boolean; payer?: string }>;
+  primaryPayer?: string;
   createdAt?: unknown;
   result?: {
     contributions?: Record<string, number>;
@@ -101,65 +102,26 @@ const getCreatedAtMs = (createdAt: unknown): number => {
   return 0;
 };
 
-const deriveTransfersFromContributions = (
-  contributions?: Record<string, number>,
-  targetRemainingBalance?: number
-): TransferFlow[] => {
-  if (!contributions || typeof targetRemainingBalance !== 'number') {
-    return [];
-  }
-
-  const payers: Array<{ name: string; amount: number }> = [];
-  const receivers: Array<{ name: string; amount: number }> = [];
-
-  Object.entries(contributions).forEach(([name, contribution]) => {
-    if (contribution > targetRemainingBalance) {
-      payers.push({ name, amount: contribution - targetRemainingBalance });
-    } else if (contribution < targetRemainingBalance) {
-      receivers.push({ name, amount: targetRemainingBalance - contribution });
-    }
-  });
-
-  const transfers: TransferFlow[] = [];
-
-  payers.forEach((payer) => {
-    let remainingToPay = payer.amount;
-
-    for (const receiver of receivers) {
-      if (remainingToPay <= 0) {
-        break;
-      }
-      if (receiver.amount <= 0) {
-        continue;
-      }
-
-      const transferAmount = Math.min(remainingToPay, receiver.amount);
-      if (transferAmount > 0) {
-        transfers.push({
-          from: payer.name,
-          to: receiver.name,
-          amount: transferAmount,
-        });
-      }
-
-      remainingToPay -= transferAmount;
-      receiver.amount -= transferAmount;
-    }
-  });
-
-  return transfers;
-};
-
 const getCalculationTransfers = (calc: Calculation): TransferFlow[] => {
-  const explicitTransfers = (calc.result?.transfers || []).filter((transfer) => (transfer.amount || 0) > 0);
-  if (explicitTransfers.length > 0) {
-    return explicitTransfers;
+  // Recompute with the canonical settlement algorithm so all views stay in sync
+  // and ignore any stale transfers baked into older saved calculations.
+  const incomes: Record<string, number> = {};
+  (calc.contributors || []).forEach((c) => {
+    if (c.name && (c.income ?? 0) > 0) incomes[c.name] = c.income ?? 0;
+  });
+  const bills = (calc.bills || []).map((b) => ({
+    name: b.name || '',
+    amount: b.amount || 0,
+    isShared: b.isShared !== false,
+    ...(b.payer ? { payer: b.payer } : {}),
+  }));
+  if (Object.keys(incomes).length > 0 && bills.length > 0) {
+    return calculateExpenditure(incomes, bills, calc.primaryPayer)
+      .transfers.filter((t) => (t.amount || 0) > 0);
   }
 
-  return deriveTransfersFromContributions(
-    calc.result?.contributions,
-    calc.result?.targetRemainingBalance
-  );
+  // Fallback to stored transfers only when inputs are missing.
+  return (calc.result?.transfers || []).filter((transfer) => (transfer.amount || 0) > 0);
 };
 
 export default function Dashboard() {
@@ -505,7 +467,7 @@ export default function Dashboard() {
       ...(b.payer ? { payer: b.payer } : {}),
     }));
     return {
-      result: calculateExpenditure(incomes, billObjects),
+      result: calculateExpenditure(incomes, billObjects, latestCalculation.primaryPayer),
       contributors,
       createdAt: latestCalculation.createdAt,
     };
@@ -898,6 +860,10 @@ export default function Dashboard() {
             {latestInsights.result.transfers.length > 0 && (
               <div className="mt-4 pt-4 border-t">
                 <p className="font-semibold text-gray-700 mb-2 text-sm">Överföringar som behövs:</p>
+                <p className="text-xs text-gray-500 mb-2">
+                  Visas eftersom en huvudbetalare betalar alla gemensamma räkningar – var och en för då över hela sin andel dit.
+                  Betalar ni istället var och en sin andel direkt behövs inga överföringar.
+                </p>
                 <div className="space-y-2">
                   {latestInsights.result.transfers.map((t, i) => (
                     <div key={i} className="flex justify-between bg-indigo-50 rounded-lg px-3 py-2 text-sm">
