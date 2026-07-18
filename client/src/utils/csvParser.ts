@@ -3,6 +3,39 @@ export interface ParsedBill {
   amount: number;
   isShared: boolean;
   payer?: string;
+  date?: string;
+}
+
+// Deduplication key: date + name + amount uniquely identifies a transaction
+export function billKey(bill: ParsedBill): string {
+  return `${bill.date || ''}|${bill.name.toLowerCase().trim()}|${bill.amount}`;
+}
+
+// Remove duplicate bills/incomes based on dedup key
+export function deduplicateBills(bills: ParsedBill[]): ParsedBill[] {
+  const seen = new Set<string>();
+  const result: ParsedBill[] = [];
+  for (const bill of bills) {
+    const key = billKey(bill);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(bill);
+    }
+  }
+  return result;
+}
+
+export function deduplicateIncomes(incomes: ParsedIncome[]): ParsedIncome[] {
+  const seen = new Set<string>();
+  const result: ParsedIncome[] = [];
+  for (const inc of incomes) {
+    const key = `${inc.name.toLowerCase().trim()}|${inc.income}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(inc);
+    }
+  }
+  return result;
 }
 
 export interface ParsedIncome {
@@ -16,7 +49,21 @@ export interface CSVResult {
   errors: string[];
 }
 
+function stripBOM(content: string): string {
+  if (content.charCodeAt(0) === 0xFEFF) {
+    return content.slice(1);
+  }
+  return content;
+}
+
+function detectSeparator(line: string): ',' | ';' | '\t' {
+  if (line.includes(';')) return ';';
+  if (line.includes('\t')) return '\t';
+  return ',';
+}
+
 export function parseCSV(content: string): CSVResult {
+  content = stripBOM(content);
   const lines = content.trim().split('\n');
   const result: CSVResult = {
     incomes: [],
@@ -29,7 +76,16 @@ export function parseCSV(content: string): CSVResult {
     return result;
   }
 
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const sep = detectSeparator(lines[0]);
+
+  // Check if this is a SEB bank export (has Bokföringsdatum or similar bank headers)
+  const headerLower = lines[0].toLowerCase();
+  if (headerLower.includes('bokföringsdatum') || headerLower.includes('valutadatum') ||
+      (headerLower.includes('belopp') && headerLower.includes('text') && sep === ';')) {
+    return parseSEBCSV(content);
+  }
+
+  const headers = lines[0].split(sep).map(h => h.trim().toLowerCase());
   
   // Detect if this is an income/bills format or custom format
   const hasIncome = headers.some(h => h.includes('income') || h.includes('inkomst'));
@@ -41,7 +97,7 @@ export function parseCSV(content: string): CSVResult {
     const line = lines[i].trim();
     if (!line) continue;
 
-    const values = line.split(',').map(v => v.trim());
+    const values = line.split(sep).map(v => v.trim());
     
     if (values.length !== headers.length) {
       result.errors.push(`Rad ${i + 1}: Fel antal kolumner`);
@@ -118,8 +174,83 @@ export function parseSEBText(content: string): CSVResult {
   return parseBankText(content);
 }
 
+// Dedicated SEB CSV parser (semicolon-separated, BOM, Swedish headers)
+export function parseSEBCSV(content: string): CSVResult {
+  content = stripBOM(content);
+  const lines = content.trim().split('\n');
+  const result: CSVResult = {
+    incomes: [],
+    bills: [],
+    errors: [],
+  };
+
+  if (lines.length === 0) {
+    result.errors.push('CSV filen är tom');
+    return result;
+  }
+
+  const sep = detectSeparator(lines[0]);
+  const headers = lines[0].split(sep).map(h => h.trim().toLowerCase());
+
+  // Find column indices for SEB format
+  let dateCol = -1;
+  let descCol = -1;
+  let amountCol = -1;
+
+  headers.forEach((h, i) => {
+    if (h.includes('datum') || h.includes('date')) dateCol = i;
+    else if (h.includes('text') || h.includes('beskriv') || h.includes('description')) descCol = i;
+    else if (h.includes('belopp') || h.includes('amount')) amountCol = i;
+  });
+
+  if (dateCol === -1 || descCol === -1 || amountCol === -1) {
+    result.errors.push('Kunde inte hitta kolumner i SEB CSV-filen');
+    return result;
+  }
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const values = line.split(sep).map(v => v.trim());
+    if (values.length <= Math.max(dateCol, descCol, amountCol)) continue;
+
+    const description = values[descCol];
+    let amountStr = values[amountCol];
+
+    if (!description || !amountStr) continue;
+
+    // SEB uses . as decimal separator
+    amountStr = amountStr.replace(/\s/g, '').replace(',', '.');
+    const amount = parseFloat(amountStr);
+
+    if (isNaN(amount) || amount === 0) continue;
+
+    if (amount < 0) {
+      result.bills.push({
+        name: description,
+        amount: Math.abs(amount),
+        isShared: true,
+        date: values[dateCol] || undefined,
+      });
+    } else {
+      result.incomes.push({
+        name: description,
+        income: amount,
+      });
+    }
+  }
+
+  if (result.bills.length === 0 && result.incomes.length === 0) {
+    result.errors.push('Hittade inga transaktioner i SEB CSV-filen');
+  }
+
+  return result;
+}
+
 // Smart multi-bank parser
 export function parseBankText(content: string): CSVResult {
+  content = stripBOM(content);
   const lines = content.trim().split('\n');
   const result: CSVResult = {
     incomes: [],
@@ -132,10 +263,12 @@ export function parseBankText(content: string): CSVResult {
     return result;
   }
 
-  // Detect separator (tab, comma, or multiple spaces)
-  let separator: '\t' | ',' | 'spaces' = '\t';
+  // Detect separator (semicolon, tab, comma, or multiple spaces)
+  let separator: '\t' | ',' | ';' | 'spaces' = '\t';
   const firstLine = lines[0];
-  if (firstLine.includes(',')) {
+  if (firstLine.includes(';')) {
+    separator = ';';
+  } else if (firstLine.includes(',')) {
     separator = ',';
   } else if (firstLine.split(/\s{2,}/).length > 1) {
     separator = 'spaces'; // Multiple spaces

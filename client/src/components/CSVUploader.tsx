@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Upload, Download, X, Clipboard } from 'lucide-react';
-import { parseCSV, parseSEBText, generateCSVTemplate, generateBillsCSVTemplate, CSVResult, ParsedBill, ParsedIncome } from '../utils/csvParser';
+import { parseCSV, parseSEBText, generateCSVTemplate, generateBillsCSVTemplate, CSVResult, ParsedBill, ParsedIncome, deduplicateBills, deduplicateIncomes } from '../utils/csvParser';
 
 interface CSVUploaderProps {
   onDataLoaded: (incomes: ParsedIncome[], bills: ParsedBill[]) => void;
@@ -11,21 +11,34 @@ export default function CSVUploader({ onDataLoaded }: CSVUploaderProps) {
   const [pasteMode, setPasteMode] = useState<'csv' | 'seb'>('csv');
   const [pastedText, setPastedText] = useState('');
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
+    const allIncomes: ParsedIncome[] = [];
+    const allBills: ParsedBill[] = [];
+    const allErrors: string[] = [];
+
+    for (const file of Array.from(files)) {
+      const content = await file.text();
       const result = parseCSV(content);
-      setParsedData(result);
-      
-      if (result.incomes.length > 0 || result.bills.length > 0) {
-        onDataLoaded(result.incomes, result.bills);
+      allIncomes.push(...result.incomes);
+      allBills.push(...result.bills);
+      if (result.errors.length > 0) {
+        allErrors.push(`${file.name}: ${result.errors.join(', ')}`);
       }
+    }
+
+    const combined: CSVResult = {
+      incomes: deduplicateIncomes(allIncomes),
+      bills: deduplicateBills(allBills),
+      errors: allErrors,
     };
-    reader.readAsText(file);
+    setParsedData(combined);
+
+    if (combined.incomes.length > 0 || combined.bills.length > 0) {
+      onDataLoaded(combined.incomes, combined.bills);
+    }
   };
 
   const handleDownloadTemplate = () => {
@@ -100,9 +113,9 @@ export default function CSVUploader({ onDataLoaded }: CSVUploaderProps) {
             <label className="flex-1 cursor-pointer">
               <div className="flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-indigo-500 transition">
                 <Upload className="h-5 w-5 text-gray-500" />
-                <span className="text-gray-600">Ladda upp CSV fil</span>
+                <span className="text-gray-600">Ladda upp CSV filer (flera möjligt)</span>
               </div>
-              <input type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
+              <input type="file" accept=".csv" multiple className="hidden" onChange={handleFileUpload} />
             </label>
           </div>
         ) : (

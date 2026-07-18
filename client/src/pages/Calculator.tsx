@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Save } from 'lucide-react';
 import { calculateExpenditure, Contributor, Bill } from '../utils/calculations';
-import { ParsedIncome, ParsedBill } from '../utils/csvParser';
+import { ParsedIncome, ParsedBill, billKey } from '../utils/csvParser';
 import CSVUploader from '../components/CSVUploader';
 import { getFirestore, collection, addDoc, query, where, limit, getDocs } from 'firebase/firestore';
 import { auth } from '../firebase';
@@ -113,7 +113,7 @@ export default function Calculator() {
     }
 
     if (billItems.length > 0) {
-      // Apply historical suggestions to bills
+      // Apply historical suggestions to newly imported bills
       const billsWithSuggestions = billItems.map(bill => {
         const billNameLower = bill.name.toLowerCase().trim();
         const suggestion = historicalSuggestions[billNameLower];
@@ -129,7 +129,12 @@ export default function Calculator() {
         return bill;
       });
 
-      setBills(billsWithSuggestions);
+      // Merge with existing bills, skipping duplicates by date+name+amount
+      setBills(prevBills => {
+        const existingKeys = new Set(prevBills.map(billKey));
+        const newBills = billsWithSuggestions.filter(b => !existingKeys.has(billKey(b)));
+        return [...prevBills, ...newBills];
+      });
     }
   };
 

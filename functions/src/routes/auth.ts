@@ -161,9 +161,11 @@ router.get('/callback', async (req, res) => {
       codeChallenge: pending.codeChallenge,
       codeChallengeMethod: pending.codeChallengeMethod,
     });
-    // Temporarily store the token under the opaque code key
+    // Temporarily store the token under the opaque code key.
+    // The refresh_token lets the MCP client renew its 1h id_token without re-auth.
     await db.collection(STATE_COLLECTION).doc(`token:${opaqueCode}`).set({
       accessToken,
+      refreshToken: tokenJson.refresh_token || null,
       expiresAt: admin.firestore.Timestamp.fromMillis(Date.now() + 5 * 60 * 1000),
     });
 
@@ -213,7 +215,16 @@ router.post('/token', async (req, res) => {
       });
       const tokenJson: any = await tokenResponse.json();
       if (!tokenResponse.ok) return res.status(tokenResponse.status).json(tokenJson);
-      return res.json({ ...tokenJson, token_type: 'Bearer', scope: 'openid email profile' });
+      // Hand back the fresh id_token as access_token (our MCP middleware validates
+      // id_tokens). Google does not re-issue the refresh_token on refresh, so echo
+      // the existing one back to the client.
+      return res.json({
+        access_token: tokenJson.id_token || tokenJson.access_token,
+        refresh_token: tokenJson.refresh_token || String(refresh_token),
+        token_type: 'Bearer',
+        expires_in: tokenJson.expires_in || 3600,
+        scope: 'openid email profile',
+      });
     }
 
     // Authorization code grant — look up the opaque code we stored at /callback
@@ -273,6 +284,7 @@ router.post('/token', async (req, res) => {
       token_type: 'Bearer',
       expires_in: 3600,
       scope: 'openid email profile',
+      ...(tokenData.refreshToken ? { refresh_token: tokenData.refreshToken } : {}),
     });
   } catch (error) {
     console.error('Token error:', error);

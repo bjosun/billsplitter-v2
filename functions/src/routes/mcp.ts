@@ -149,7 +149,8 @@ const tools = [
             properties: {
               name: { type: 'string' },
               amount: { type: 'number' },
-              shared: { type: 'boolean' },
+              isShared: { type: 'boolean', description: 'True if the bill is shared between the household members' },
+              shared: { type: 'boolean', description: 'Legacy alias for isShared' },
               payer: { type: 'string' },
             },
           },
@@ -324,6 +325,13 @@ function isMember(members: any, uid: string): boolean {
   return false;
 }
 
+// The web app stores bills with `isShared`; the MCP tool schema historically used
+// `shared`. Normalize to `isShared` so bills from either source calculate correctly.
+function normalizeBill(bill: any): any {
+  const { shared, ...rest } = bill;
+  return { ...rest, isShared: bill.isShared !== undefined ? !!bill.isShared : !!shared };
+}
+
 // Verify the authenticated user is a member of the given household.
 // Pre-existing tools (add_bill, calculate_split, etc.) do not check this; new tools must.
 async function assertHouseholdMember(uid: string, householdId: string) {
@@ -346,10 +354,12 @@ function parseBankTextBackend(text: string): any[] {
 
   if (lines.length === 0) return [];
 
-  // Detect separator (tab, comma, or multiple spaces)
-  let separator: '\t' | ',' | 'spaces' = '\t';
+  // Detect separator (semicolon, tab, comma, or multiple spaces)
+  let separator: '\t' | ',' | ';' | 'spaces' = '\t';
   const firstLine = lines[0];
-  if (firstLine.includes(',')) {
+  if (firstLine.includes(';')) {
+    separator = ';';
+  } else if (firstLine.includes(',')) {
     separator = ',';
   } else if (firstLine.split(/\s{2,}/).length > 1) {
     separator = 'spaces';
@@ -570,6 +580,7 @@ const toolHandlers: Record<string, any> = {
 
     let contributors = providedContributors;
     let bills = providedBills;
+    let effectivePrimaryPayer = primaryPayer;
 
     // If contributors/bills not provided, fetch from latest calculation
     if (!contributors || contributors.length === 0 || !bills || bills.length === 0) {
@@ -584,6 +595,9 @@ const toolHandlers: Record<string, any> = {
         const latestCalc = calcSnap.docs[0].data();
         contributors = contributors && contributors.length > 0 ? contributors : latestCalc.contributors;
         bills = bills && bills.length > 0 ? bills : latestCalc.bills;
+        if (!effectivePrimaryPayer && latestCalc.primaryPayer) {
+          effectivePrimaryPayer = latestCalc.primaryPayer;
+        }
         console.log(`[calculate_split] Fetched: ${contributors?.length || 0} contributors, ${bills?.length || 0} bills`);
       }
     }
@@ -595,8 +609,9 @@ const toolHandlers: Record<string, any> = {
       throw new Error('No bills found. Provide bills or create a calculation first.');
     }
 
-    // Filter shared bills
-    const sharedBills = bills.filter((b: any) => b.shared);
+    // Normalize `shared` → `isShared` so bills from both the web app and MCP
+    // calculate correctly. calculateExpenditure separates shared vs individual itself.
+    const normalizedBills = bills.map(normalizeBill);
 
     // Convert contributors array to income record
     const incomes: Record<string, number> = {};
@@ -605,7 +620,7 @@ const toolHandlers: Record<string, any> = {
     });
 
     // Calculate
-    const expenditure = calculateExpenditure(incomes, sharedBills, primaryPayer);
+    const expenditure = calculateExpenditure(incomes, normalizedBills, effectivePrimaryPayer);
 
     // Attach pending status to every transfer so mark_transfer_paid can flip it later.
     const expenditureWithStatus = {
@@ -613,17 +628,17 @@ const toolHandlers: Record<string, any> = {
       transfers: expenditure.transfers.map((t) => ({ ...t, status: 'pending' as const })),
     };
 
-    // Save to history
+    // Save to history — all bills (shared + individual), matching the web app format
     const calculation: Record<string, any> = {
       userId: req.user!.uid,
       householdId,
       contributors,
-      bills: sharedBills,
+      bills: normalizedBills,
       result: expenditureWithStatus,
       createdAt: new Date().toISOString(),
     };
-    if (primaryPayer) {
-      calculation.primaryPayer = primaryPayer;
+    if (effectivePrimaryPayer) {
+      calculation.primaryPayer = effectivePrimaryPayer;
     }
     const docRef = await db.collection('calculations').add(calculation);
 
@@ -989,6 +1004,18 @@ function sendRpcError(
   // JSON-RPC errors are returned over HTTP 200 — HTTP status reserved for transport-level failures.
   res.status(200).json(response);
 }
+
+// Health/info endpoint — MCP itself is JSON-RPC over POST, but a GET here gives
+// browsers and uptime checks a useful response instead of "Cannot GET /mcp".
+router.get('/', (_req, res) => {
+  res.json({
+    name: SERVER_INFO.name,
+    version: SERVER_INFO.version,
+    protocolVersion: PROTOCOL_VERSION,
+    transport: 'jsonrpc-2.0-over-http-post',
+    message: 'MCP endpoint is live. Send JSON-RPC 2.0 requests via POST with a Bearer token.',
+  });
+});
 
 // MCP endpoint
 router.post('/', authenticateOAuth, async (req: AuthRequest, res) => {
